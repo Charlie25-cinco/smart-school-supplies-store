@@ -6,6 +6,29 @@
     const dialog = document.getElementById('basket-dialog');
     const cart = new Map();
     let products = [], category = 'all', timer;
+    const handoff = document.getElementById('open-messenger');
+    const copyHelp = document.getElementById('copy-help');
+    const basketStatus = document.getElementById('basket-status');
+    const floatingBasket = document.getElementById('floating-basket');
+    let destinationUrl = '', destinationIsPage = false, basketOpener;
+    let inquiryVersion = 0, copiedVersion = null, lastSummary = '', copyAttempt = 0;
+    const updateCopyGate = () => {
+        const enabled = Boolean(destinationUrl && cart.size && copiedVersion === inquiryVersion);
+        if (enabled) handoff.href = destinationUrl;
+        else handoff.removeAttribute('href');
+        handoff.setAttribute('aria-disabled', String(!enabled));
+        handoff.tabIndex = enabled ? 0 : -1;
+        handoff.classList.toggle('disabled', !enabled);
+        copyHelp.textContent = !destinationUrl ? 'You can copy your summary; the store messaging link is not configured yet.'
+            : enabled ? 'Summary copied. Your message is ready to paste.' : 'Copy your current summary to enable the next step.';
+    };
+    const markCopied = () => {
+        copiedVersion = inquiryVersion; copyAttempt++; updateCopyGate();
+        basketStatus.textContent = destinationIsPage
+            ? 'Summary copied. Open our Facebook Page, choose Message, then paste and send your inquiry.'
+            : 'Summary copied. Open Messenger, paste it, and send your inquiry.';
+        if (!destinationUrl) basketStatus.textContent = 'Summary copied. The store messaging link is not configured yet.';
+    };
     const art = {
         notebook: '<rect x="41" y="22" width="91" height="124" rx="5" fill="#26466c"/><rect x="48" y="24" width="83" height="117" rx="3" fill="#90abc8"/><path d="M55 24v117" stroke="#213d62"/><rect x="65" y="59" width="54" height="39" rx="2" fill="#faf4dd"/><path d="M74 73h37M74 82h26" stroke="#7b9070" stroke-width="2"/><g stroke="#213d62" stroke-width="2" stroke-linecap="round"><path d="M39 36h12M39 49h12M39 62h12M39 75h12M39 88h12M39 101h12M39 114h12M39 127h12"/></g>',
         pen: '<g transform="rotate(23 90 86)"><rect x="70" y="17" width="13" height="122" rx="4" fill="#284f63"/><rect x="71" y="18" width="11" height="40" rx="3" fill="#477c90"/><path d="M81 22h4v33" stroke="#becdd0" stroke-width="2"/><path d="m72 136 4.5 12 4.5-12" fill="#a8b5b7"/><rect x="91" y="32" width="12" height="114" rx="4" fill="#244c82"/><rect x="92" y="32" width="10" height="38" rx="3" fill="#6284af"/><path d="M100 36h5v30" stroke="#bac1b0" stroke-width="2"/><path d="m93 143 4 11 4-11" fill="#a8b5b7"/></g>',
@@ -54,7 +77,12 @@
         let total = 0; const rows = ['Hello Smart School Supplies! I would like to inquire about:', ''];
         cart.forEach((quantity, sku) => { const product = products.find(p => p.sku === sku); if (!product) return; total += quantity * product.price_cents; rows.push(`• ${product.name} — ${quantity} × ${money(product.price_cents)} = ${money(quantity * product.price_cents)}`); });
         rows.push('', `Estimated total: ${money(total)}`, `Fulfillment: ${document.getElementById('fulfillment').value}`, 'Please confirm availability, final price, any delivery fee, and payment arrangements.');
-        document.getElementById('order-summary').value = rows.join('\n'); document.getElementById('basket-total').textContent = money(total);
+        const text = rows.join('\n');
+        if (text !== lastSummary) {
+            lastSummary = text; inquiryVersion++; copiedVersion = null; copyAttempt++;
+            basketStatus.textContent = ''; updateCopyGate();
+        }
+        document.getElementById('order-summary').value = text; document.getElementById('basket-total').textContent = money(total);
     };
     const renderBasket = () => {
         const focused = document.activeElement?.dataset?.basketControl;
@@ -69,7 +97,10 @@
             minus.addEventListener('click', () => change(quantity - 1)); plus.addEventListener('click', () => change(quantity + 1)); remove.addEventListener('click', () => change(0)); input.addEventListener('change', () => change(Math.trunc(Number(input.value)) || 1));
             controls.append(minus, input, plus, remove); details.append(controls); row.append(details, element('span', 'basket-line-price', money(quantity * product.price_cents))); lines.append(row);
         });
-        document.getElementById('basket-count').textContent = count; document.getElementById('basket-empty').hidden = count > 0; document.getElementById('basket-details').hidden = count === 0; summary();
+        document.getElementById('basket-count').textContent = count;
+        document.getElementById('floating-basket-count').textContent = count;
+        document.getElementById('clear-basket').disabled = count === 0;
+        document.getElementById('basket-empty').hidden = count > 0; document.getElementById('basket-details').hidden = count === 0; summary();
         if (focused) { const control = [...lines.querySelectorAll('[data-basket-control]')].find(el => el.dataset.basketControl === focused); (control || document.getElementById('close-basket')).focus(); }
     };
     let restored = [];
@@ -89,17 +120,62 @@
     document.querySelectorAll('[data-category]').forEach(button => button.addEventListener('click', () => { category = button.dataset.category; document.querySelectorAll('[data-category]').forEach(tab => { tab.classList.toggle('active', tab === button); tab.setAttribute('aria-pressed', String(tab === button)); }); renderProducts(); }));
     document.getElementById('catalog-search').addEventListener('input', renderProducts);
     document.getElementById('reset-search').addEventListener('click', () => { document.getElementById('catalog-search').value = ''; document.querySelector('[data-category="all"]').click(); });
-    document.querySelectorAll('[data-open-basket]').forEach(button => button.addEventListener('click', () => { renderBasket(); dialog.showModal(); }));
+    document.querySelectorAll('[data-open-basket]').forEach(button => button.addEventListener('click', () => {
+        basketOpener = button; renderBasket(); floatingBasket.hidden = true;
+        document.getElementById('catalog-toast').hidden = true; dialog.showModal();
+    }));
     document.getElementById('close-basket').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => { floatingBasket.hidden = false; basketOpener?.focus({preventScroll: true}); });
+    document.getElementById('clear-basket').addEventListener('click', () => {
+        cart.clear();
+        try { localStorage.removeItem('smart-supplies-list-v1'); } catch { /* Clearing still works without storage. */ }
+        renderBasket(); basketStatus.textContent = 'Your list has been cleared.';
+        document.getElementById('close-basket').focus({preventScroll: true});
+    });
     document.getElementById('fulfillment').addEventListener('change', summary);
     document.getElementById('retry-catalog').addEventListener('click', load);
     document.getElementById('copy-summary').addEventListener('click', async () => {
-        const field = document.getElementById('order-summary'); const status = document.getElementById('basket-status');
-        try { await navigator.clipboard.writeText(field.value); status.textContent = 'Summary copied. Open Messenger, paste it, and send your inquiry.'; }
-        catch { field.focus(); field.select(); status.textContent = 'Select and copy the summary, then paste it into Messenger.'; }
+        const field = document.getElementById('order-summary');
+        const text = field.value, version = inquiryVersion, attempt = ++copyAttempt;
+        const isCurrent = () => attempt === copyAttempt && version === inquiryVersion && text === field.value && cart.size > 0;
+        copiedVersion = null; updateCopyGate(); basketStatus.textContent = 'Copying your summary…';
+        try {
+            await navigator.clipboard.writeText(text);
+            if (isCurrent()) markCopied();
+            else if (text !== field.value && copiedVersion !== null) {
+                // An older write can finish after a newer one and replace its text.
+                copiedVersion = null; updateCopyGate();
+                basketStatus.textContent = 'Your list changed while copying. Copy the current summary again.';
+            }
+        }
+        catch {
+            if (!isCurrent()) return;
+            field.focus(); field.select();
+            basketStatus.textContent = 'Automatic copying was unavailable. Your summary is selected: press Ctrl+C, or use Copy on your phone. The next step unlocks after you copy the full summary.';
+        }
     });
+    document.getElementById('order-summary').addEventListener('copy', event => {
+        const field = event.currentTarget;
+        if (!event.isTrusted || !event.clipboardData || !cart.size || document.activeElement !== field
+            || field.selectionStart !== 0 || field.selectionEnd !== field.value.length || field.value !== lastSummary) return;
+        // Only a native, full-selection copy can complete the manual fallback.
+        try { event.clipboardData.setData('text/plain', field.value); event.preventDefault(); markCopied(); }
+        catch { copiedVersion = null; updateCopyGate(); basketStatus.textContent = 'Copying was unavailable. Try Copy summary again.'; }
+    });
+    handoff.addEventListener('click', event => { if (handoff.getAttribute('aria-disabled') === 'true') event.preventDefault(); });
     if (config.demo === false) { document.getElementById('demo-badge').hidden = true; document.getElementById('demo-footer').hidden = true; }
     document.getElementById('store-location').textContent = config.location || 'Confirm pickup or nearby delivery with staff.';
-    try { const url = new URL(config.messengerUrl); if (url.protocol === 'https:' && ['m.me','messenger.com','www.messenger.com','facebook.com','www.facebook.com'].includes(url.hostname)) { const link = document.getElementById('open-messenger'); link.href = url.href; link.textContent = url.hostname.includes('facebook.com') ? 'Open Facebook Page ↗' : 'Open Messenger ↗'; link.hidden = false; document.getElementById('messenger-unconfigured').hidden = true; } } catch { /* Missing link is deliberately shown as a demo state. */ }
+    try {
+        const url = new URL(config.messengerUrl);
+        if (url.protocol === 'https:' && ['m.me','messenger.com','www.messenger.com','facebook.com','www.facebook.com'].includes(url.hostname)) {
+            destinationUrl = url.href; destinationIsPage = url.hostname.includes('facebook.com');
+            handoff.textContent = destinationIsPage ? 'Open Facebook Page ↗' : 'Open Messenger ↗'; handoff.hidden = false;
+            document.getElementById('messenger-unconfigured').hidden = true;
+        }
+    } catch { /* Missing link is deliberately shown as a demo state. */ }
+    document.getElementById('summary-help').textContent = destinationIsPage
+        ? '1. Copy your summary. 2. Open our Facebook Page and choose Message. 3. Paste and send.'
+        : '1. Copy your summary. 2. Open Messenger. 3. Paste and send.';
+    updateCopyGate();
     load();
 })();
