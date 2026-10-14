@@ -36,7 +36,7 @@ class StoreTest extends TestCase
         $this->post('/sales', [])->assertRedirect('/login');
     }
 
-    public function test_cashier_cannot_change_inventory_or_view_owner_dashboard(): void
+    public function test_cashier_cannot_change_inventory_or_view_admin_dashboard(): void
     {
         $product = $this->product();
         $this->actingAs($this->staff());
@@ -122,21 +122,21 @@ class StoreTest extends TestCase
         $this->assertDatabaseCount('sales', 0);
     }
 
-    public function test_owner_can_restock_and_cashier_receipt_access_is_restricted(): void
+    public function test_admin_can_restock_and_cashier_receipt_access_is_restricted(): void
     {
         $product = $this->product();
-        $owner = $this->staff('owner');
+        $admin = $this->staff('admin');
         $cashier = $this->staff();
         $other = $this->staff();
-        $this->actingAs($owner)->post('/inventory/'.$product->id.'/restock', ['quantity' => 7, 'reason' => 'New delivery'])->assertRedirect('/inventory');
+        $this->actingAs($admin)->post('/inventory/'.$product->id.'/restock', ['quantity' => 7, 'reason' => 'New delivery'])->assertRedirect('/inventory');
         $this->assertSame(17, $product->fresh()->stock);
-        $this->assertDatabaseHas('stock_movements', ['quantity' => 7, 'reason' => 'New delivery', 'user_id' => $owner->id]);
+        $this->assertDatabaseHas('stock_movements', ['quantity' => 7, 'reason' => 'New delivery', 'user_id' => $admin->id]);
         $this->actingAs($cashier)->post('/sales', $this->payload([['product_id' => $product->id, 'quantity' => 1]]));
         $sale = Sale::firstOrFail();
         $this->get('/sales/'.$sale->id.'/receipt')->assertOk()->assertSee($sale->receiptNumber());
         $this->actingAs($other)->get('/sales/'.$sale->id.'/receipt')->assertForbidden();
         $this->get('/sales')->assertDontSee($sale->receiptNumber());
-        $this->actingAs($owner)->get('/sales/'.$sale->id.'/receipt')->assertOk();
+        $this->actingAs($admin)->get('/sales/'.$sale->id.'/receipt')->assertOk();
     }
 
     public function test_historical_receipt_keeps_original_name_and_price(): void
@@ -150,7 +150,7 @@ class StoreTest extends TestCase
 
     public function test_product_creation_validation_and_kind_are_preserved(): void
     {
-        $this->actingAs($this->staff('owner'));
+        $this->actingAs($this->staff('admin'));
         $data = ['sku' => 'TEST-01', 'name' => 'Test supply', 'category' => 'Paper', 'kind' => 'product', 'price' => '15.50', 'stock' => 4, 'reorder_level' => 2, 'active' => 1];
         $this->post('/inventory', $data)->assertRedirect('/inventory');
         $product = Product::firstOrFail();
@@ -166,10 +166,10 @@ class StoreTest extends TestCase
     public function test_dashboard_and_report_include_only_selected_sales(): void
     {
         $this->travelTo(now()->setDate(2026, 10, 10)->setTime(12, 0));
-        $owner = $this->staff('owner');
+        $admin = $this->staff('admin');
         $product = $this->product(['name' => 'Low stock item', 'stock' => 2, 'price_cents' => 1200]);
-        $this->actingAs($owner)->post('/sales', $this->payload([['product_id' => $product->id, 'quantity' => 1]], '20.00'));
-        $this->get('/dashboard')->assertOk()->assertSee('12.00')->assertSee('Low stock item');
+        $this->actingAs($this->staff())->post('/sales', $this->payload([['product_id' => $product->id, 'quantity' => 1]], '20.00'));
+        $this->actingAs($admin)->get('/dashboard')->assertOk()->assertSee('12.00')->assertSee('Low stock item');
         $this->get('/sales?from=2026-10-10&to=2026-10-10')->assertOk()->assertSee('12.00')->assertSee('SS-000001');
         $this->get('/sales?from=2026-10-09&to=2026-10-09')->assertOk()->assertDontSee('SS-000001');
         $this->get('/sales?from=2026-10-11&to=2026-10-10')->assertSessionHasErrors('to');
@@ -178,7 +178,7 @@ class StoreTest extends TestCase
     public function test_login_logout_and_account_creation_use_hashed_passwords(): void
     {
         $password = Str::random(24);
-        $user = $this->staff('owner');
+        $user = $this->staff('admin');
         $user->update(['password' => $password]);
         $this->post('/login', ['email' => $user->email, 'password' => 'invalid'])->assertSessionHasErrors('email');
         $this->post('/login', ['email' => $user->email, 'password' => $password])->assertRedirect('/dashboard');
@@ -215,8 +215,8 @@ class StoreTest extends TestCase
 
     public function test_invalid_stock_movement_restores_server_derived_dialog_without_mutation(): void
     {
-        $item = $this->product();
-        $this->actingAs($this->staff('owner'));
+        $item = $this->product(['kind' => 'consumable', 'price_cents' => 0]);
+        $this->actingAs($this->staff('admin'));
         $this->from('/inventory')->post('/inventory/'.$item->id.'/usage', ['quantity' => '11', 'reason' => 'Printing', 'movement_dialog' => 'restock-999'])
             ->assertRedirect('/inventory')->assertSessionHasErrors('quantity')
             ->assertSessionHasInput('movement_dialog', 'usage-'.$item->id)
@@ -228,16 +228,37 @@ class StoreTest extends TestCase
         $this->assertSame(10, $item->fresh()->stock);
     }
 
+    public function test_supply_usage_is_limited_to_internal_consumables_in_forms_and_routes(): void
+    {
+        $product = $this->product();
+        $service = $this->product(['sku' => 'DEMO-SERVICE', 'kind' => 'service', 'stock' => 0]);
+        $supply = $this->product(['sku' => 'DEMO-SUPPLY', 'kind' => 'consumable', 'price_cents' => 0]);
+        $this->actingAs($this->staff('admin'));
+        $this->get('/inventory')->assertOk()
+            ->assertDontSee('data-modal-open="usage-'.$product->id.'"', false)
+            ->assertDontSee('id="usage-'.$product->id.'"', false)
+            ->assertDontSee('data-modal-open="usage-'.$service->id.'"', false)
+            ->assertSee('data-modal-open="usage-'.$supply->id.'"', false);
+        foreach ([$product, $service] as $item) {
+            $this->post('/inventory/'.$item->id.'/usage', ['quantity' => 1, 'reason' => 'Fictional forged usage'])->assertStatus(422);
+        }
+        $this->assertSame(10, $product->fresh()->stock);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->post('/inventory/'.$supply->id.'/usage', ['quantity' => 1, 'reason' => 'Fictional paper usage'])->assertRedirect('/inventory');
+        $this->assertSame(9, $supply->fresh()->stock);
+        $this->assertDatabaseCount('stock_movements', 1);
+    }
+
     public function test_unchecked_active_value_survives_validation_and_deactivates_item(): void
     {
         $item = $this->product();
-        $this->actingAs($this->staff('owner'));
+        $this->actingAs($this->staff('admin'));
         $data = ['sku' => $item->sku, 'name' => $item->name, 'category' => $item->category, 'kind' => $item->kind, 'price' => '0', 'reorder_level' => '3', 'active' => '0'];
         $this->from('/inventory/'.$item->id.'/edit')->put('/inventory/'.$item->id, $data)
             ->assertSessionHasErrors('price')->assertSessionHasInput('active', '0');
         $this->assertTrue($item->fresh()->active);
         $this->put('/inventory/'.$item->id, [...$data, 'price' => '45.25'])->assertRedirect('/inventory');
         $this->assertFalse($item->fresh()->active);
-        $this->get('/pos')->assertDontSee($item->name);
+        $this->actingAs($this->staff())->get('/pos')->assertDontSee($item->name);
     }
 }

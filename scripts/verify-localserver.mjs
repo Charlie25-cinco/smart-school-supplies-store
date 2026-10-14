@@ -48,11 +48,125 @@ const port = await new Promise((resolvePort, reject) => {
     server.listen(0, '127.0.0.1', () => { const value = server.address().port; server.close(() => resolvePort(value)); });
 });
 const url = 'http://127.0.0.1:' + port;
-let browser, started = false;
+let browser, started = false, launchAttempted = false;
 const checks = [];
+const startupTimings = {};
+let readinessChecks;
+const verifyReadiness = async () => {
+    const probeRuntime=resolve(runtime,'startup-checks-'+randomUUID());
+    mkdirSync(probeRuntime,{recursive:true});
+    const probePort=await new Promise((resolvePort,reject)=>{const server=createServer();server.on('error',reject);server.listen(0,'127.0.0.1',()=>{const value=server.address().port;server.close(()=>resolvePort(value));});});
+    const phpFixture=resolve(probeRuntime,'delayed-listener.php');
+    const psDriver=resolve(probeRuntime,'verify-readiness.ps1');
+    writeFileSync(phpFixture,String.raw`<?php
+if (PHP_SAPI !== 'cli' || $argc !== 4) { exit(2); }
+usleep((int) ((float) $argv[1] * 1000000));
+if ($argv[3] === 'exit') { exit(0); }
+$socket = stream_socket_server('tcp://127.0.0.1:'.(int) $argv[2], $errorCode, $errorMessage);
+if (! $socket) { exit(3); }
+$deadline = microtime(true) + 240;
+while (microtime(true) < $deadline) {
+    $peer = @stream_socket_accept($socket, 1);
+    if ($peer) { fclose($peer); }
+}
+fclose($socket);
+`);
+    writeFileSync(psDriver,String.raw`[CmdletBinding()]
+param([string] $ProjectRoot, [string] $PhpExecutable, [string] $RuntimeDirectory, [int] $Port)
+. (Join-Path $ProjectRoot 'scripts\local-server-common.ps1')
+$RuntimeDirectory = Get-StoreRuntime $RuntimeDirectory
+if (Test-Path -LiteralPath $PhpExecutable -PathType Leaf) { $PhpExecutable = (Resolve-Path -LiteralPath $PhpExecutable).Path }
+else { $PhpExecutable = (Get-Command $PhpExecutable -CommandType Application -ErrorAction Stop).Source }
+$script:probe = $null
+function Assert-Probe([bool] $Condition, [string] $Message) {
+    if (-not $Condition) { throw $Message }
+}
+function New-Probe([double] $Delay, [string] $Mode = 'listen') {
+    $fixture = Join-Path $RuntimeDirectory 'delayed-listener.php'
+    $arguments = '"' + $fixture + '" ' + $Delay.ToString([Globalization.CultureInfo]::InvariantCulture) + ' ' + $Port + ' ' + $Mode
+    $child = Start-Process -FilePath $PhpExecutable -ArgumentList $arguments -WorkingDirectory $RuntimeDirectory -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $RuntimeDirectory 'probe-output.log') -RedirectStandardError (Join-Path $RuntimeDirectory 'probe-error.log')
+    $script:probe = @{ Mode='artisan'; Runtime=$RuntimeDirectory; Php=$PhpExecutable; Port=$Port; Url="http://127.0.0.1:$Port"; Pid=$child.Id; StartTicks=$child.StartTime.ToUniversalTime().Ticks }
+    Write-StoreUtf8 (Join-Path $RuntimeDirectory 'settings.json') ($script:probe | ConvertTo-Json)
+    return $script:probe
+}
+function Stop-Probe {
+    if ($script:probe) {
+        # This fixture is a single PHP listener, not an Artisan tree. Verify its
+        # exact executable/PID/start time before closing only that test process.
+        $owned = Get-StoreProcess $script:probe
+        if ($owned) {
+            $owned.Kill()
+            Assert-Probe ($owned.WaitForExit(5000)) 'Isolated startup fixture did not stop.'
+        }
+        $script:probe = $null
+    }
+}
+function Invoke-ReusedStart {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot 'scripts\Start-Store.ps1') -RuntimeDirectory $RuntimeDirectory
+    Assert-Probe ($LASTEXITCODE -eq 0) 'Reused isolated startup failed.'
+    Assert-Probe (($output | Out-String) -match 'already running') 'Launcher did not reuse its verified process.'
+}
+try {
+    Assert-Probe (-not (Get-StoreProcess (Get-StoreSettings $RuntimeDirectory))) 'Isolated startup runtime already owns a live process.'
+    $delayed = New-Probe 18
+    $forged = @{}
+    foreach ($entry in $delayed.GetEnumerator()) { $forged[$entry.Key] = $entry.Value }
+    $forged.StartTicks = $delayed.StartTicks + 1
+    $guardRejected = $false
+    try { [void](Wait-StoreReady $forged -TimeoutSeconds 1) } catch { $guardRejected = $_.Exception.Message -match 'different process' }
+    Assert-Probe $guardRejected 'Readiness accepted a live PID with forged start time.'
+    Assert-Probe ([bool](Get-StoreProcess $delayed)) 'Identity rejection stopped the valid test process.'
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $delayedResult = Wait-StoreReady $delayed
+    $delayedMs = [int] $timer.Elapsed.TotalMilliseconds
+    Assert-Probe ($delayedResult -eq 'ready') 'Default readiness rejected the delayed test listener.'
+    Assert-Probe ($delayedMs -gt 15000 -and $delayedMs -lt 46000) 'Default readiness was not exercised beyond the former 15-second limit.'
+    Invoke-ReusedStart
+    $reused = Get-StoreSettings $RuntimeDirectory
+    Assert-Probe ($reused.Pid -eq $delayed.Pid -and $reused.StartTicks -eq $delayed.StartTicks) 'Ready retry launched a second process.'
+    Stop-Probe
+
+    $warming = New-Probe 6
+    $earlyResult = Wait-StoreReady $warming -TimeoutSeconds 2
+    Assert-Probe ($earlyResult -eq 'timeout') 'Short readiness check did not time out while warming.'
+    Assert-Probe ([bool](Get-StoreProcess $warming)) 'Readiness timeout stopped its owned process.'
+    Assert-Probe (-not (Test-StorePort $Port)) 'Warm-reuse fixture was already listening before retry.'
+    $reuseTimer = [Diagnostics.Stopwatch]::StartNew()
+    Invoke-ReusedStart
+    $warmReuseMs = [int] $reuseTimer.Elapsed.TotalMilliseconds
+    $reused = Get-StoreSettings $RuntimeDirectory
+    Assert-Probe ($reused.Pid -eq $warming.Pid -and $reused.StartTicks -eq $warming.StartTicks) 'Warm retry launched a second process.'
+    Assert-Probe (Test-StorePort $Port) 'Reused launcher returned before the listener became ready.'
+    Stop-Probe
+
+    $ended = New-Probe 1 'exit'
+    Assert-Probe ((Wait-StoreReady $ended) -eq 'exited') 'Readiness failed to distinguish process exit from timeout.'
+    Stop-Probe
+    $ended = New-Probe 1 'exit'
+    $exitMessage = $false
+    try { Confirm-StoreReady $ended } catch { $exitMessage = $_.Exception.Message -match 'process ended before it became ready' }
+    Assert-Probe $exitMessage 'Readiness confirmation omitted the process-exit explanation.'
+    Stop-Probe
+    Write-Output ('STARTUP_CHECKS:' + (@{ delayedWaitMs=$delayedMs; warmReuseMs=$warmReuseMs; delayedReady=$true; readyReuse=$true; timeoutPreservedProcess=$true; warmReuse=$true; identityGuard=$true; exitState=$true; exitMessage=$true } | ConvertTo-Json -Compress))
+} finally { Stop-Probe }
+`);
+    const output=await run('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',psDriver,'-ProjectRoot',root,'-PhpExecutable',process.env.PHP_EXECUTABLE||'php','-RuntimeDirectory',probeRuntime,'-Port',String(probePort)]);
+    const result=/^STARTUP_CHECKS:(.+)$/m.exec(output);
+    assert.ok(result,'Isolated startup verification did not return results.');
+    return JSON.parse(result[1]);
+};
 try {
     await run(process.env.PHP_EXECUTABLE || 'php', [resolve(root, 'scripts/local-server-fixture.php')], app);
+    readinessChecks=await verifyReadiness();
+    checks.push('Default 45-second readiness accepted an owned PHP listener delayed beyond 15 seconds');
+    checks.push('Readiness rejected forged live PID start-time metadata without stopping the verified process');
+    checks.push('Early readiness timeout preserved the warming process; repeated Start waited and reused its original PID');
+    checks.push('Already-ready Start reused the same verified process without duplicate launch');
+    checks.push('Process exit returned exited and produced the distinct readiness-confirmation explanation');
+    const launchStart = performance.now();
+    launchAttempted = true;
     await launch('Start-Store.ps1', ['-Port', String(port)]);
+    startupTimings.launcherMs = Math.round(performance.now() - launchStart);
     started = true;
     const get = path => new Promise((resolveGet, reject) => {
         const request = http.get(url + path, response => {
@@ -63,7 +177,11 @@ try {
         request.setTimeout(10000, () => request.destroy(new Error('HTTP request timed out')));
         request.on('error', reject);
     });
+    const loginStart = performance.now();
     assert.equal((await get('/login')).status, 200);
+    startupTimings.firstLoginMs = Math.round(performance.now() - loginStart);
+    startupTimings.launchToLoginMs = Math.round(performance.now() - launchStart);
+    if (process.env.STORE_TIMING_BASELINE === '1') writeFileSync(resolve(artifacts,'startup-baseline.json'),JSON.stringify(startupTimings,null,2));
     assert.equal((await get('/pos')).status, 302);
     for (const path of ['/.env', '/.git/config', '/database/database.sqlite', '/storage/logs/laravel.log', '/%2e%2e/.env']) {
         const response = await get(path);
@@ -125,21 +243,31 @@ try {
     checks.push('Concurrent duplicate submission returned one receipt and recorded one sale');
     await Promise.all(pages.map(page => select(page, 'Blue Ballpen')));
     await pages[0].getByLabel('Fulfillment', {exact:true}).selectOption('delivery');
+    await pages[0].locator('#edit-order-details').click();
     await pages[0].getByLabel('Customer name', {exact:true}).fill('Concurrent demo customer');
     await pages[0].getByLabel('Contact number', {exact:true}).fill('09123456789');
     await pages[0].getByLabel('Delivery address', {exact:true}).fill('Demo school gate');
     await pages[0].getByLabel('Delivery fee (₱)').fill('20');
     await pages[0].getByLabel('When is payment collected?').selectOption('cod');
+    await pages[0].getByRole('button',{name:'Use these details',exact:true}).click();
     await pages[0].locator('#complete-sale').click();
     await pages[0].waitForURL(/\/orders\/\d+$/);
     const orderId = new URL(pages[0].url()).pathname.split('/').pop();
     await pages[1].locator('#complete-sale').click();
     await pages[1].getByRole('alert').filter({hasText:'Insufficient stock'}).waitFor();
+    await pages[0].goto(url+'/orders/'+orderId+'/edit');
+    const editForm=Object.fromEntries(await pages[0].locator('#order-edit-form').evaluate(element=>[...new FormData(element).entries()]));
+    const edits=await Promise.all(['A','B'].map(label=>pages[0].request.post(url+'/orders/'+orderId,{form:{...editForm,notes:'Concurrent demo edit '+label},maxRedirects:0})));
+    assert.ok(edits.every(response=>response.status()===302));
+    assert.equal(edits.filter(response=>response.headers().location.endsWith('/orders/'+orderId)).length,1,'Both stale edits were accepted');
+    assert.equal(edits.filter(response=>response.headers().location.endsWith('/orders/'+orderId+'/edit')).length,1,'Stale edit did not return to correction');
+    checks.push('Concurrent edits accepted one saved revision and rejected the stale form without duplicating reservations');
     const token = await pages[0].locator('[name=_token]').first().inputValue();
     const collection = {_token:token,payment_method:'gcash',cash:'32.00',payment_reference:'CONCURRENT-GCASH-001',payment_verified:'1'};
     const payments = await Promise.all([1,2].map(() => pages[0].request.post(url + '/orders/' + orderId + '/payment', {form:collection,maxRedirects:0})));
     assert.ok(payments.every(response => response.status() === 302));
     assert.equal(payments[0].headers().location, payments[1].headers().location);
+    await pages[0].request.post(url+'/orders/'+orderId,{form:{...editForm,notes:'Rejected stale financial edit'},maxRedirects:0});
     totals = JSON.parse(await run(process.env.PHP_EXECUTABLE || 'php', [resolve(root, 'scripts/local-server-fixture.php'), 'inspect'], app));
     assert.equal(totals.sales,5);
     assert.equal(totals.references,5);
@@ -171,10 +299,13 @@ try {
         assert.ok(occupied.listening);
     } finally { await new Promise(resolveClose => occupied.close(resolveClose)); }
     checks.push('Unrelated PID and occupied port rejected without stopping another application');
-    writeFileSync(resolve(artifacts, 'local-server-results.json'), JSON.stringify({ status: 'PASS', checks, totals, consoleErrors: errors }, null, 2));
+    writeFileSync(resolve(artifacts, 'local-server-results.json'), JSON.stringify({ status: 'PASS', checks, totals, startupTimings, readinessChecks, consoleErrors: errors }, null, 2));
+    console.log('Startup timings (ms): '+JSON.stringify(startupTimings));
     for (const check of checks) console.log('PASS: ' + check);
 } finally {
     if (browser) await browser.close();
-    if (started) await launch('Stop-Store.ps1');
+    // A startup timeout retains its owned PHP process before started=true.
+    // The Stop launcher verifies identity; only the isolated QA runtime is used.
+    if (started || launchAttempted) await launch('Stop-Store.ps1');
     for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(database + suffix, { force: true });
 }

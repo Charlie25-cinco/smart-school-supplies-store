@@ -19,7 +19,18 @@ function Get-StoreProcess($Settings) {
     if (-not $Settings) { return $null }
     $process = Get-Process -Id $Settings.Pid -ErrorAction SilentlyContinue
     if (-not $process) { return $null }
-    if (-not $process.Path -or -not $process.Path.Equals($Settings.Php, [StringComparison]::OrdinalIgnoreCase) -or $Settings.StartTicks -ne $process.StartTime.ToUniversalTime().Ticks) { throw 'The recorded PID belongs to a different process; it will not be controlled.' }
+    try {
+        if ($process.HasExited) { return $null }
+        $processPath = $process.Path
+        $processStartTicks = $process.StartTime.ToUniversalTime().Ticks
+    } catch {
+        if (-not (Get-Process -Id $Settings.Pid -ErrorAction SilentlyContinue)) { return $null }
+        throw
+    }
+    if (-not $processPath -or -not $processPath.Equals($Settings.Php, [StringComparison]::OrdinalIgnoreCase) -or $Settings.StartTicks -ne $processStartTicks) {
+        if ($process.HasExited -or -not (Get-Process -Id $Settings.Pid -ErrorAction SilentlyContinue)) { return $null }
+        throw 'The recorded PID belongs to a different process; it will not be controlled.'
+    }
     return $process
 }
 function Test-StorePort([int] $Port) {
@@ -29,6 +40,38 @@ function Test-StorePort([int] $Port) {
         if (-not $task.Wait(400)) { return $false }
         return $client.Connected
     } catch { return $false } finally { $client.Dispose() }
+}
+function Wait-StoreReady($Settings, [ValidateRange(1, 45)][int] $TimeoutSeconds = 45) {
+    $readiness = [Diagnostics.Stopwatch]::StartNew()
+    $nextProgress = 10
+    while ($readiness.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        if (-not (Get-StoreProcess $Settings)) { return 'exited' }
+        if (Test-StorePort $Settings.Port) {
+            if (-not (Get-StoreProcess $Settings)) { return 'exited' }
+            return 'ready'
+        }
+        if ($readiness.Elapsed.TotalSeconds -ge $nextProgress) {
+            Write-Host 'The store is still starting. Please wait...'
+            $nextProgress += 10
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not (Get-StoreProcess $Settings)) { return 'exited' }
+    return 'timeout'
+}
+function Confirm-StoreReady($Settings) {
+    switch (Wait-StoreReady $Settings) {
+        'exited' { throw 'The PHP store process ended before it became ready. Inspect private .runtime/artisan logs locally, then run Start Store.cmd again.' }
+        'timeout' { throw 'The store did not become ready within 45 seconds. PHP is still running. Wait a moment and run Start Store.cmd again to reuse this process. Inspect private .runtime/artisan logs locally if the delay continues.' }
+    }
+}
+function Test-StorePortAvailable([int] $Port) {
+    $listener = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Any, $Port)
+    try {
+        $listener.Server.ExclusiveAddressUse = $true
+        $listener.Start()
+        return $true
+    } catch [Net.Sockets.SocketException] { return $false } finally { $listener.Stop() }
 }
 function Write-StoreUtf8([string] $Path, [string] $Text) {
     [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding $false))

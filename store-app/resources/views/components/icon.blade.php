@@ -16,6 +16,7 @@
         @case('basket')<path d="m8 9 4-6 4 6M3 9h18l-2 12H5L3 9ZM9 13v4M15 13v4"/>@break
         @case('service')<path d="M7 8V3h10v5M7 17H4V8h16v9h-3M7 14h10v7H7zM16 11h1"/>@break
         @case('product')<path d="M5 3h14v18H5zM8 3v18M11 7h5M11 11h5"/>@break
+        @case('pen')<path d="m15 3 6 6-12 12H3v-6L15 3ZM12 6l6 6M3 15l6 6"/>@break
         @case('cash')<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 12h.01M18 12h.01"/>@break
         @case('phone')<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>@break
     @endswitch

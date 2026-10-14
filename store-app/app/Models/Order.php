@@ -2,11 +2,17 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 class Order extends Model
 {
     protected $guarded = ['id'];
+
+    protected function casts(): array
+    {
+        return ['assigned_at' => 'datetime'];
+    }
 
     public function items()
     {
@@ -26,6 +32,33 @@ class Order extends Model
     public function paidBy()
     {
         return $this->belongsTo(User::class, 'paid_by');
+    }
+
+    public function assignedCashier()
+    {
+        return $this->belongsTo(User::class, 'assigned_cashier_id');
+    }
+
+    public function assignedBy()
+    {
+        return $this->belongsTo(User::class, 'assigned_by');
+    }
+
+    public function canBeHandedOff(): bool
+    {
+        return $this->user?->isAdmin() && in_array($this->status, ['preparing', 'ready', 'out_for_delivery'], true);
+    }
+
+    public function isAssignedTo(User $user): bool
+    {
+        return $this->assigned_cashier_id === $user->id && $this->user?->isAdmin();
+    }
+
+    public function scopeAccessibleToCashier(Builder $query, User $user): void
+    {
+        $query->where(fn (Builder $query) => $query->where('user_id', $user->id)
+            ->orWhere(fn (Builder $query) => $query->where('assigned_cashier_id', $user->id)
+                ->whereHas('user', fn (Builder $query) => $query->where('role', 'admin'))));
     }
 
     public function number(): string

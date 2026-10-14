@@ -19,6 +19,9 @@ if (app) {
     const plan = document.getElementById('payment_plan');
     const fee = document.getElementById('delivery_fee');
     const method = document.getElementById('payment_method');
+    const orderDialog = document.getElementById('order-details-dialog');
+    const detailsButton = document.getElementById('edit-order-details');
+    const revealPanel = panel => app.dispatchEvent(new CustomEvent('pos:panel-reveal', { detail: { panel } }));
     const isOrder = () => fulfillment.value !== 'counter';
     const isUnpaid = () => isOrder() && plan.value === 'cod';
     const buttonLabel = () => isOrder() ? 'Confirm order →' : 'Complete sale →';
@@ -31,10 +34,13 @@ if (app) {
         document.getElementById('cart-fee').textContent = money(deliveryFee);
         document.getElementById('cart-total').textContent = money(total);
         document.getElementById('fee-summary').hidden = !delivery;
+        document.getElementById('subtotal-summary').hidden = !isOrder();
         document.getElementById('mobile-basket-total').textContent = money(total);
         const units = [...cart.values()].reduce((sum, quantity) => sum + quantity, 0);
         document.getElementById('basket-count').textContent = `${units} ${units === 1 ? 'item' : 'items'}`;
-        document.getElementById('mobile-basket-count').textContent = `Basket · ${units} ${units === 1 ? 'item' : 'items'}`;
+        document.getElementById('mobile-basket-count').textContent = `Current sale · ${units} ${units === 1 ? 'item' : 'items'}`;
+        document.getElementById('pos-switch-count').textContent = String(units);
+        document.getElementById('pos-switch-total').textContent = money(total);
         const value = cash.value;
         const valid = /^\d{1,7}(\.\d{1,2})?$/.test(value);
         const received = valid ? Math.round(Number(value) * 100) : 0;
@@ -45,7 +51,7 @@ if (app) {
         document.getElementById('change-row').hidden = isUnpaid() || gcash;
         document.getElementById('cart-change').textContent = money(gcash ? 0 : Math.max(0, received - total));
         complete.disabled = submitting || !cart.size || !feeValid || total > 999999999 || (!isUnpaid() && !paidValid);
-        feedback.textContent = !cart.size ? 'Add an item to start.' : !feeValid ? 'Enter the agreed delivery fee.' : isUnpaid() ? 'Unpaid order: stock will be reserved; revenue is recorded after collection.' : !valid ? 'Enter the payment received.' : received < total ? `${money(total - received)} more needed to complete this sale.` : gcash && !paidValid ? 'Enter the exact total, transaction reference, and confirm GCash verification.' : 'Payment covers the total. Ready to complete.';
+        feedback.textContent = !cart.size ? '' : !feeValid ? 'Enter the agreed delivery fee.' : isUnpaid() ? 'Ready to confirm an unpaid order.' : !valid ? 'Enter the payment received.' : received < total ? `${money(total - received)} more needed.` : gcash && !paidValid ? 'Complete the GCash reference and verification.' : 'Payment covers the total.';
     };
     const toggle = (id, visible) => {
         const section = document.getElementById(id);
@@ -53,6 +59,10 @@ if (app) {
         section.querySelectorAll('input,select,textarea').forEach(input => { input.disabled = !visible; });
     };
     const syncMode = () => {
+        app.dataset.mode = fulfillment.value;
+        detailsButton.hidden = !isOrder();
+        document.getElementById('order-detail-summary').hidden = !isOrder();
+        document.getElementById('collection-note').hidden = !isUnpaid();
         toggle('order-fields', isOrder());
         toggle('delivery-fields', fulfillment.value === 'delivery');
         const paymentFields = document.querySelector('[data-payment-fields]');
@@ -64,6 +74,7 @@ if (app) {
         complete.textContent = buttonLabel();
         document.getElementById('checkout-note').textContent = isUnpaid() ? 'Available stock excludes confirmed unpaid reservations.' : 'Stock updates once when payment is recorded.';
         updatePayment();
+        summarizeDetails();
     };
     const render = () => {
         const focused = document.activeElement?.dataset?.cartControl;
@@ -95,7 +106,7 @@ if (app) {
         document.getElementById('cart-empty').hidden = cart.size > 0;
         document.getElementById('clear-cart').disabled = !cart.size;
         updatePayment();
-        if (focused) { const control = [...lines.querySelectorAll('[data-cart-control]')].find(el => el.dataset.cartControl === focused); (control || document.getElementById('pos-search')).focus(); }
+        if (focused) { const control = [...lines.querySelectorAll('[data-cart-control]')].find(el => el.dataset.cartControl === focused); if (!control) revealPanel('products'); (control || document.getElementById('pos-search')).focus(); }
     };
     document.querySelectorAll('[data-product-id]').forEach(button => button.addEventListener('click', () => {
         const id = button.dataset.productId; const product = byId.get(id); const quantity = cart.get(id) || 0;
@@ -116,9 +127,30 @@ if (app) {
     document.getElementById('payment_reference').addEventListener('input', updatePayment);
     document.querySelector('[name=payment_verified]').addEventListener('change', updatePayment);
     fulfillment.addEventListener('change', syncMode);
+    detailsButton.addEventListener('click', () => { revealPanel('sale'); orderDialog.showModal(); });
+    const summarizeDetails = () => {
+        const name = document.getElementById('customer_name').value.trim();
+        document.getElementById('order-detail-summary').textContent = name ? `${name} · ${isUnpaid() ? 'Payment on collection' : 'Prepaid'}` : 'Add customer details before confirming.';
+    };
+    document.getElementById('save-order-details').addEventListener('click', () => {
+        const invalid = [...orderDialog.querySelectorAll('input,select,textarea')].find(field => field.willValidate && !field.validity.valid);
+        if (invalid) { invalid.reportValidity(); return; }
+        orderDialog.close(); summarizeDetails();
+    });
+    orderDialog.addEventListener('close', () => {
+        summarizeDetails();
+        // The customer-details trigger lives in Products, which may now be hidden.
+        if (detailsButton.closest('[hidden]')) document.getElementById('pos-sale-tab').focus({ preventScroll: true });
+    });
+    document.getElementById('checkout-form').addEventListener('invalid', event => {
+        revealPanel('sale');
+        if (orderDialog.contains(event.target) && !orderDialog.open) {
+            event.preventDefault(); orderDialog.showModal();
+            requestAnimationFrame(() => event.target.focus());
+        }
+    }, true);
     plan.addEventListener('change', syncMode);
     fee.addEventListener('input', updatePayment);
-    document.querySelector('.mobile-basket-bar').addEventListener('click', () => document.getElementById('checkout-basket').focus());
     document.getElementById('checkout-form').addEventListener('submit', event => { if (complete.disabled) { event.preventDefault(); return; } submitting = true; complete.disabled = true; complete.textContent = isOrder() ? 'Confirming order…' : 'Recording sale…'; });
     window.addEventListener('pageshow', event => {
         // A restored checkout must not reuse a completed request for a new sale.
@@ -127,5 +159,5 @@ if (app) {
         submitting = false; complete.textContent = buttonLabel(); updatePayment();
     });
     Object.values(oldItems || {}).forEach(item => { const id = String(item.product_id); const product = byId.get(id); if (product && maxQuantity(product) > 0) cart.set(id, Math.max(1, Math.min(maxQuantity(product), Number(item.quantity) || 1))); });
-    syncMode(); render(); search();
+    syncMode(); summarizeDetails(); render(); search();
 }

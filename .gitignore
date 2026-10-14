@@ -30,3 +30,6 @@ auth.json
 .DS_Store
 backup/
 backups/
+.wrangler/
+/supabase/.temp/
+*.private.json

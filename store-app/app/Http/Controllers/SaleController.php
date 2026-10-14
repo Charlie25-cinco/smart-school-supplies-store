@@ -40,9 +40,11 @@ class SaleController extends Controller
         $data = $request->validate(['from' => ['nullable', 'date_format:Y-m-d'], 'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from']]);
         $from = $data['from'] ?? now()->startOfMonth()->toDateString();
         $to = $data['to'] ?? now()->toDateString();
-        $query = Sale::with('user')->whereBetween('created_at', [$from.' 00:00:00', $to.' 23:59:59']);
-        if ($request->user()->role !== 'owner') {
-            $query->where('user_id', $request->user()->id);
+        $query = Sale::with('user', 'order.paidBy')->whereBetween('created_at', [$from.' 00:00:00', $to.' 23:59:59']);
+        if (! $request->user()->isAdmin()) {
+            $query->where(fn ($query) => $query->where('user_id', $request->user()->id)
+                ->orWhereHas('order', fn ($query) => $query->where('paid_by', $request->user()->id)
+                    ->whereHas('user', fn ($query) => $query->where('role', 'admin'))));
         }
         $total = (clone $query)->sum('total_cents');
         $count = (clone $query)->count();
@@ -54,8 +56,12 @@ class SaleController extends Controller
 
     public function receipt(Request $request, Sale $sale)
     {
-        abort_unless($request->user()->role === 'owner' || $sale->user_id === $request->user()->id, 403);
+        $sale->load('items', 'user', 'order.user', 'order.paidBy');
+        $user = $request->user();
+        $adminOrder = $sale->order?->user?->isAdmin();
+        abort_unless($user->isAdmin() || $sale->user_id === $user->id || ($user->isCashier() && $adminOrder
+            && ($sale->order->isAssignedTo($user) || $sale->order->paid_by === $user->id)), 403);
 
-        return view('receipt', ['sale' => $sale->load('items', 'user', 'order')]);
+        return view('receipt', ['sale' => $sale]);
     }
 }

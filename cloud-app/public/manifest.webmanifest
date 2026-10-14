@@ -1,0 +1,6 @@
+{
+  "id": "/staff/", "name": "Smart School Supplies Staff", "short_name": "Smart Store",
+  "start_url": "/staff/", "scope": "/staff/", "display": "standalone",
+  "background_color": "#f4f6fa", "theme_color": "#122c50",
+  "icons": [{"src":"/staff/icon.svg","sizes":"192x192 512x512 any","type":"image/svg+xml","purpose":"any maskable"}]
+}

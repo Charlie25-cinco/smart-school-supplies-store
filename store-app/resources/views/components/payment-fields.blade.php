@@ -2,7 +2,7 @@
 <div class="payment-fields" data-payment-fields>
     @if($heading)<h3 class="section-title">Payment</h3>@endif
     <div class="payment-row"><div><label for="payment_method">Payment method</label>
-    <select id="payment_method" name="payment_method"><option value="cash" @selected(old('payment_method', 'cash') === 'cash')>Cash</option><option value="gcash" @selected(old('payment_method') === 'gcash')>GCash · manually verified</option></select>
+    <select id="payment_method" name="payment_method"><option value="cash" @selected(old('payment_method', 'cash') === 'cash')>Cash</option><option value="gcash" @selected(old('payment_method') === 'gcash')>GCash</option></select>
     </div><div><label for="cash" id="payment-amount-label">Cash received (₱)</label>
     <input id="cash" name="cash" type="number" min="0" max="9999999.99" step="0.01" inputmode="decimal" value="{{ old('cash', $amount) }}" required placeholder="0.00">
     </div></div>

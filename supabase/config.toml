@@ -1,0 +1,8 @@
+project_id = "smart-school-supplies-store"
+
+[auth]
+enable_signup = false
+minimum_password_length = 12
+
+[functions.staff-admin]
+verify_jwt = false

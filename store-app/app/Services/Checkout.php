@@ -15,6 +15,8 @@ class Checkout
 {
     public function complete(User $user, array $items, int $cash, string $channel, string $reference, string $method = 'cash', ?string $paymentReference = null, bool $verified = false): Sale
     {
+        abort_unless($user->active && $user->isCashier(), 403);
+
         return DB::transaction(function () use ($user, $items, $cash, $channel, $reference, $method, $paymentReference, $verified) {
             $existing = Sale::where('reference', $reference)->first();
             if ($existing) {

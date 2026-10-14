@@ -1,6 +1,18 @@
 (() => {
     'use strict';
     const config = window.STORE_CONFIG || {};
+    const cloud = window.CLOUD_CONFIG || {};
+    let cloudEndpoint = '';
+    if (cloud.url || cloud.key) {
+        try {
+            const url = new URL(cloud.url);
+            const claims = cloud.key?.split('.');
+            const publicKey = /^sb_publishable_[A-Za-z0-9_-]+$/.test(cloud.key || '') || (claims?.length === 3 && JSON.parse(atob(claims[1].replace(/-/g, '+').replace(/_/g, '/'))).role === 'anon');
+            if (url.protocol === 'https:' && /^[a-z0-9-]+\.supabase\.co$/.test(url.hostname) && url.pathname === '/' && !url.search && !url.hash && !url.username && publicKey) cloudEndpoint = url.origin;
+        } catch { /* Invalid cloud configuration never falls back to fictional stock. */ }
+    }
+    const cloudConfigured = Boolean(cloud.url || cloud.key);
+    const cacheKey = 'smart-public-catalog-v1-' + cloudEndpoint;
     const money = cents => new Intl.NumberFormat('en-PH', {style: 'currency', currency: 'PHP'}).format(cents / 100);
     const element = (tag, className, text) => { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; };
     const dialog = document.getElementById('basket-dialog');
@@ -41,7 +53,7 @@
     };
     const announce = text => { const toast = document.getElementById('catalog-toast'); toast.textContent = text; toast.hidden = false; clearTimeout(timer); timer = setTimeout(() => { toast.hidden = true; }, 2600); };
     const save = () => { try { localStorage.setItem('smart-supplies-list-v1', JSON.stringify([...cart])); } catch { /* Basket remains usable without browser storage. */ } };
-    const add = sku => { cart.set(sku, Math.min(99, (cart.get(sku) || 0) + 1)); save(); renderBasket(); announce(`${products.find(p => p.sku === sku).name} added to your list.`); };
+    const add = sku => { const product = products.find(p => p.sku === sku); if (!product || product.available === false) return; cart.set(sku, Math.min(99, (cart.get(sku) || 0) + 1)); save(); renderBasket(); announce(`${product.name} added to your list.`); };
     const renderProducts = () => {
         const search = document.getElementById('catalog-search').value.toLowerCase().trim();
         const items = products.filter(p => p.kind === 'product' && (category === 'all' || p.category === category) && `${p.name} ${p.description} ${p.category}`.toLowerCase().includes(search));
@@ -53,6 +65,8 @@
             visual.innerHTML = `<svg viewBox="0 0 175 175" fill="none">${art[product.art] || art.notebook}</svg>`;
             const content = element('div', 'product-content'); content.append(element('p', 'product-category', product.category), element('h3', '', product.name), element('p', 'product-description', product.description));
             const bottom = element('div', 'product-bottom'); const button = element('button', 'add-item', 'Add'); button.type = 'button'; button.setAttribute('aria-label', `Add ${product.name} to your list`); button.addEventListener('click', () => add(product.sku));
+            if (cloudConfigured) content.append(element('p', 'catalog-availability' + (product.available === false ? ' unavailable' : ''), product.available === false ? 'Currently unavailable' : 'Available in last synced stock'));
+            button.disabled = product.available === false;
             bottom.append(element('strong', '', money(product.price_cents)), button); content.append(bottom); card.append(visual, content); grid.append(card);
         });
         grid.setAttribute('aria-busy', 'false'); document.getElementById('catalog-count').textContent = `${items.length} ${items.length === 1 ? 'essential' : 'essentials'}`; document.getElementById('catalog-empty').hidden = items.length > 0;
@@ -75,7 +89,7 @@
     };
     const summary = () => {
         let total = 0; const rows = ['Hello Smart School Supplies! I would like to inquire about:', ''];
-        cart.forEach((quantity, sku) => { const product = products.find(p => p.sku === sku); if (!product) return; total += quantity * product.price_cents; rows.push(`• ${product.name} — ${quantity} × ${money(product.price_cents)} = ${money(quantity * product.price_cents)}`); });
+        cart.forEach((quantity, sku) => { const product = products.find(p => p.sku === sku); if (!product) return; total += quantity * product.price_cents; rows.push(`• ${product.name} — ${quantity} × ${money(product.price_cents)} = ${money(quantity * product.price_cents)}${product.available === false ? ' (currently unavailable; please confirm)' : ''}`); });
         rows.push('', `Estimated total: ${money(total)}`, `Fulfillment: ${document.getElementById('fulfillment').value}`, 'Please confirm availability, final price, any delivery fee, and payment arrangements.');
         const text = rows.join('\n');
         if (text !== lastSummary) {
@@ -105,17 +119,40 @@
     };
     let restored = [];
     try { restored = JSON.parse(localStorage.getItem('smart-supplies-list-v1') || '[]'); } catch { /* Ignore invalid or unavailable local storage. */ }
+    let loading = false;
+    const validProducts = data => Array.isArray(data) && data.every(p => typeof p.sku === 'string' && typeof p.name === 'string' && ['product','service'].includes(p.kind) && Number.isSafeInteger(p.price_cents) && p.price_cents > 0 && (!cloudConfigured || typeof p.available === 'boolean'));
     const load = async () => {
+        if (loading) return;
+        loading = true;
         document.getElementById('catalog-error').hidden = true; document.getElementById('catalog-count').textContent = 'Loading catalog…';
         try {
-            const response = await fetch('products.json'); if (!response.ok) throw new Error('Catalog unavailable');
-            const data = await response.json(); if (!Array.isArray(data) || !data.every(p => typeof p.sku === 'string' && typeof p.name === 'string' && Number.isInteger(p.price_cents) && p.price_cents > 0)) throw new Error('Invalid catalog');
+            if (cloudConfigured && !cloudEndpoint) throw new Error('Invalid catalog configuration');
+            let data, fetchedAt, cached = false;
+            try {
+                const response = cloudConfigured ? await fetch(cloudEndpoint + '/rest/v1/rpc/public_catalog', {method:'POST', headers:{apikey:cloud.key,'Content-Type':'application/json'}, body:'{}', credentials:'omit', cache:'no-store', signal:AbortSignal.timeout(10000)}) : await fetch('products.json');
+                if (!response.ok) throw new Error('Catalog unavailable');
+                data = await response.json(); if (!validProducts(data)) throw new Error('Invalid catalog');
+                fetchedAt = new Date().toISOString();
+                if (cloudConfigured) { try { localStorage.setItem(cacheKey, JSON.stringify({products:data,fetched_at:fetchedAt})); } catch { /* Public browsing still works when cache storage is full. */ } }
+            } catch (error) {
+                if (!cloudConfigured) throw error;
+                let saved; try { saved = JSON.parse(localStorage.getItem(cacheKey) || 'null'); } catch { /* Report missing cache below. */ }
+                if (!saved || !validProducts(saved.products) || !Number.isFinite(Date.parse(saved.fetched_at))) throw error;
+                data = saved.products; fetchedAt = saved.fetched_at; cached = true;
+            }
             products = data;
+            for (const sku of cart.keys()) if (!products.some(p => p.sku === sku)) cart.delete(sku);
             if (Array.isArray(restored)) restored.forEach(entry => { if (Array.isArray(entry) && products.some(p => p.sku === entry[0]) && Number.isInteger(entry[1]) && entry[1] > 0 && entry[1] <= 99) cart.set(entry[0], entry[1]); });
-            restored = []; renderProducts(); renderServices(); renderBasket();
+            restored = []; save(); renderProducts(); renderServices(); renderBasket();
+            if (cloudConfigured) {
+                const freshness = document.getElementById('catalog-freshness');
+                freshness.textContent = `${cached ? 'Cached catalog' : 'Synced catalog'} · ${new Intl.DateTimeFormat('en-PH', {timeZone:'Asia/Manila',dateStyle:'medium',timeStyle:'short'}).format(new Date(fetchedAt))}. ${cached ? 'Reconnect to check changes. ' : ''}Offline staff changes appear after synchronization; confirm with Messenger.`;
+                freshness.classList.toggle('cached', cached);
+            }
         } catch {
             document.getElementById('catalog-count').textContent = 'Catalog unavailable'; document.getElementById('catalog-products').setAttribute('aria-busy', 'false'); document.getElementById('catalog-error').hidden = false;
-        }
+            if (cloudConfigured) document.getElementById('catalog-freshness').textContent = 'No synchronized catalog is available. Reconnect or contact our Facebook Page.';
+        } finally { loading = false; }
     };
     document.querySelectorAll('[data-category]').forEach(button => button.addEventListener('click', () => { category = button.dataset.category; document.querySelectorAll('[data-category]').forEach(tab => { tab.classList.toggle('active', tab === button); tab.setAttribute('aria-pressed', String(tab === button)); }); renderProducts(); }));
     document.getElementById('catalog-search').addEventListener('input', renderProducts);
@@ -178,4 +215,10 @@
         : '1. Copy your summary. 2. Open Messenger. 3. Paste and send.';
     updateCopyGate();
     load();
+    if (cloudConfigured) {
+        window.addEventListener('online', load);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) load(); });
+        setInterval(() => { if (!document.hidden && navigator.onLine) load(); }, 60000);
+    }
+    if ('serviceWorker' in navigator && window.isSecureContext && cloudConfigured) navigator.serviceWorker.register('sw.js', {scope:'./'}).catch(() => { /* Browsing remains available; the cache label reflects data freshness. */ });
 })();

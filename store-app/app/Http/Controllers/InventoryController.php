@@ -77,7 +77,7 @@ class InventoryController extends Controller
 
     public function usage(Request $request, Product $product)
     {
-        abort_unless($product->kind !== 'service', 422);
+        abort_unless($product->kind === 'consumable', 422, 'Supply usage is limited to internal consumables.');
         $data = $this->movementData($request, $product, 'usage');
         DB::transaction(function () use ($request, $product, $data) {
             if (! Product::whereKey($product->id)->whereRaw('stock - reserved >= ?', [$data['quantity']])->decrement('stock', $data['quantity'])) {
