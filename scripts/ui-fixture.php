@@ -14,7 +14,9 @@ $app = require __DIR__.'/../store-app/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
 $database = config('database.connections.sqlite.database');
 $artifacts = realpath(__DIR__.'/../artifacts');
-if (app()->environment() !== 'testing' || config('database.default') !== 'sqlite' || ! $artifacts || realpath(dirname($database)) !== $artifacts || basename($database) !== 'ui-test.sqlite') {
+$isIsolatedSqlite = config('database.default') === 'sqlite' && $artifacts && realpath(dirname($database)) === $artifacts && basename($database) === 'ui-test.sqlite';
+$isIsolatedMysql = config('database.default') === 'mysql' && config('database.connections.mysql.database') === 'smart_store_test';
+if (app()->environment() !== 'testing' || !($isIsolatedSqlite || $isIsolatedMysql)) {
     throw new RuntimeException('Browser fixtures require the isolated test database.');
 }
 $password = getenv('UI_PASSWORD');
@@ -22,11 +24,11 @@ if (! is_string($password) || strlen($password) < 24) {
     throw new RuntimeException('A random ephemeral test password is required.');
 }
 if (($argv[1] ?? '') === 'legacy-order') {
-    $admin = User::where('email', 'admin@example.test')->firstOrFail();
-    $cashier = User::where('email', 'cashier@example.test')->firstOrFail();
+    $admin = User::where('username', 'admin')->firstOrFail();
+    $cashier = User::where('username', 'cashier')->firstOrFail();
     $disabled = new User;
     $disabled->name = 'Disabled Handoff Demo';
-    $disabled->email = 'disabled-handoff@example.test';
+    $disabled->username = 'disabled-handoff';
     $disabled->role = 'cashier';
     $disabled->active = false;
     $disabled->password = $password;
@@ -68,11 +70,11 @@ if (($argv[1] ?? '') === 'inspect-handoff') {
     echo json_encode([
         'creator_id' => $order->user_id, 'assigned_cashier_id' => $order->assigned_cashier_id,
         'assigned_by' => $order->assigned_by, 'assigned_at' => $order->assigned_at !== null,
-        'paid_by' => $order->paid_by, 'status' => $order->status, 'total_cents' => $order->total_cents,
-        'snapshot_name' => $order->items->first()->name, 'snapshot_price' => $order->items->first()->price_cents,
-        'stock' => $product->stock, 'reserved' => $product->reserved,
-        'sale_count' => $order->sale()->count(), 'sale_creator_id' => $order->sale?->user_id,
-        'sale_total_cents' => $order->sale?->total_cents,
+        'paid_by' => $order->paid_by, 'status' => $order->status, 'total_cents' => (int) $order->total_cents,
+        'snapshot_name' => $order->items->first()->name, 'snapshot_price' => (int) $order->items->first()->price_cents,
+        'stock' => (int) $product->stock, 'reserved' => (int) $product->reserved,
+        'sale_count' => (int) $order->sale()->count(), 'sale_creator_id' => $order->sale?->user_id,
+        'sale_total_cents' => $order->sale ? (int) $order->sale->total_cents : null,
     ]);
     exit;
 }
@@ -81,7 +83,7 @@ Artisan::call('db:seed', ['--force' => true]);
 foreach (['admin' => 'Demo Admin', 'cashier' => 'Demo Cashier'] as $role => $name) {
     $user = new User;
     $user->name = $name;
-    $user->email = $role.'@example.test';
+    $user->username = $role;
     $user->password = $password;
     $user->role = $role;
     $user->save();

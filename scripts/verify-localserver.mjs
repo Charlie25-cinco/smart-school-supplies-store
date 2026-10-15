@@ -14,15 +14,19 @@ const runtime = resolve(root, '.runtime', 'qa-artisan');
 mkdirSync(artifacts, { recursive: true });
 const database = resolve(artifacts, 'lan-test.sqlite');
 assert.equal(dirname(database), artifacts);
-for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(database + suffix, { force: true });
-writeFileSync(database, '');
+// The project database engine is Laragon MySQL; this suite resets the shared
+// isolated smart_store_test database (credentials resolve from the local
+// ignored .env, least-privileged to the test database).
+import { spawnSync } from 'node:child_process';
+const freshMysql = spawnSync(process.env.PHP_EXECUTABLE || 'php', ['artisan', 'migrate:fresh', '--force'], { cwd: app, env: { ...process.env, APP_ENV: 'testing', APP_DEBUG: 'false', APP_KEY: 'base64:' + randomBytes(32).toString('base64'), DB_CONNECTION: 'mysql', DB_DATABASE: 'smart_store_test', DB_URL: '', CACHE_STORE: 'array', SESSION_DRIVER: 'database' }, encoding: 'utf8', windowsHide: true });
+assert.equal(freshMysql.status, 0, 'Isolated MySQL fixture reset failed.');
 const views = resolve(artifacts, 'lan-views');
 mkdirSync(views, { recursive: true });
 const password = randomBytes(24).toString('hex');
 const env = {
     ...process.env, APP_ENV: 'testing', APP_DEBUG: 'false',
     APP_KEY: 'base64:' + randomBytes(32).toString('base64'), APP_CONFIG_CACHE: resolve(artifacts, 'absent-lan-config.php'),
-    DB_CONNECTION: 'sqlite', DB_DATABASE: database, DB_URL: '', CACHE_STORE: 'array',
+    DB_CONNECTION: 'mysql', DB_DATABASE: 'smart_store_test', DB_URL: '', CACHE_STORE: 'array',
     SESSION_DRIVER: 'database', VIEW_COMPILED_PATH: views, UI_PASSWORD: password,
 };
 const run = (command, args, cwd = root) => new Promise((resolveRun, reject) => {
@@ -199,7 +203,7 @@ try {
     for (const page of pages) page.on('pageerror', error => errors.push(error.message));
     await Promise.all(pages.map(async (page, index) => {
         await page.goto(url + '/login');
-        await page.getByLabel('Email address').fill((index ? 'two' : 'one') + '@example.test');
+        await page.getByLabel('Username').fill(index ? 'two' : 'one');
         await page.getByLabel('Password', { exact: true }).fill(password);
         await page.getByRole('button', { name: /Sign in/ }).click();
         await page.waitForURL('**/pos');
@@ -217,7 +221,7 @@ try {
     await Promise.all(pages.map(page => select(page, 'Spiral Notebook')));
     await Promise.all(pages.map(page => page.locator('#complete-sale').click()));
     await Promise.all(pages.map(page => page.waitForURL('**/receipt')));
-    checks.push('Two independent cashier sessions submitted concurrent requests against one SQLite database');
+    checks.push('Two independent cashier sessions submitted concurrent requests against one MySQL database');
     await Promise.all(pages.map(page => select(page, 'Black Ballpen')));
     await Promise.all(pages.map(page => page.locator('#complete-sale').click()));
     await Promise.all(pages.map(page => page.waitForLoadState('networkidle')));

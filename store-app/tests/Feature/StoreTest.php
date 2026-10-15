@@ -170,8 +170,11 @@ class StoreTest extends TestCase
         $product = $this->product(['name' => 'Low stock item', 'stock' => 2, 'price_cents' => 1200]);
         $this->actingAs($this->staff())->post('/sales', $this->payload([['product_id' => $product->id, 'quantity' => 1]], '20.00'));
         $this->actingAs($admin)->get('/dashboard')->assertOk()->assertSee('12.00')->assertSee('Low stock item');
-        $this->get('/sales?from=2026-10-10&to=2026-10-10')->assertOk()->assertSee('12.00')->assertSee('SS-000001');
-        $this->get('/sales?from=2026-10-09&to=2026-10-09')->assertOk()->assertDontSee('SS-000001');
+        // Receipt numbers follow the database sequence, which MySQL does not
+        // rewind on rollback — assert the actual sale's number, not a fixed one.
+        $receipt = Sale::firstOrFail()->receiptNumber();
+        $this->get('/sales?from=2026-10-10&to=2026-10-10')->assertOk()->assertSee('12.00')->assertSee($receipt);
+        $this->get('/sales?from=2026-10-09&to=2026-10-09')->assertOk()->assertDontSee($receipt);
         $this->get('/sales?from=2026-10-11&to=2026-10-10')->assertSessionHasErrors('to');
     }
 
@@ -180,14 +183,14 @@ class StoreTest extends TestCase
         $password = Str::random(24);
         $user = $this->staff('admin');
         $user->update(['password' => $password]);
-        $this->post('/login', ['email' => $user->email, 'password' => 'invalid'])->assertSessionHasErrors('email');
-        $this->post('/login', ['email' => $user->email, 'password' => $password])->assertRedirect('/dashboard');
+        $this->post('/login', ['login' => $user->username, 'password' => 'invalid'])->assertSessionHasErrors('login');
+        $this->post('/login', ['login' => $user->username, 'password' => $password])->assertRedirect('/dashboard');
         $this->assertAuthenticatedAs($user);
         $this->post('/logout')->assertRedirect('/login');
         $this->assertGuest();
         $staffPassword = Str::random(24);
-        $this->artisan('store:staff --role=cashier')->expectsQuestion('Staff name', 'Cashier')->expectsQuestion('Login email', 'cashier@example.test')->expectsQuestion('Password (at least 12 characters)', $staffPassword)->assertSuccessful();
-        $staff = User::where('email', 'cashier@example.test')->firstOrFail();
+        $this->artisan('store:staff --role=cashier')->expectsQuestion('Staff name', 'Cashier')->expectsQuestion('Username (letters, numbers, hyphens, 3-40 characters)', 'cashier')->expectsQuestion('Password (at least 12 characters)', $staffPassword)->assertSuccessful();
+        $staff = User::where('username', 'cashier')->firstOrFail();
         $this->assertSame('cashier', $staff->role);
         $this->assertNotSame($staffPassword, $staff->password);
     }
