@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Product extends Model
 {
-    protected $fillable = ['sku', 'name', 'category', 'kind', 'price_cents', 'stock', 'reserved', 'reorder_level', 'active'];
+    protected $fillable = ['sku', 'name', 'category', 'kind', 'price_cents', 'stock', 'reserved', 'reorder_level', 'active', 'image_path', 'description'];
 
     protected function casts(): array
     {
@@ -21,5 +21,15 @@ class Product extends Model
     public function movements()
     {
         return $this->hasMany(StockMovement::class);
+    }
+
+    public function saleItems()
+    {
+        return $this->hasMany(SaleItem::class);
+    }
+
+    public function orderItems()
+    {
+        return $this->hasMany(OrderItem::class);
     }
 }

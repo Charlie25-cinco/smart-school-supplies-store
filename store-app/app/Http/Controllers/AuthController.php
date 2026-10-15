@@ -17,11 +17,11 @@ class AuthController extends Controller
 
     public function login(Request $request)
     {
-        $credentials = $request->validate(['email' => ['required', 'email'], 'password' => ['required', 'string']]);
-        $email = Str::lower(trim($credentials['email']));
-        $credentials['email'] = fn ($query) => $query->whereRaw('LOWER(email) = ?', [$email]);
-        if (! Auth::attemptWhen([...$credentials, 'active' => true], fn (User $user) => $user->isAdmin() || $user->isCashier())) {
-            throw ValidationException::withMessages(['email' => 'The email or password is incorrect.']);
+        $data = $request->validate(['login' => ['required', 'string', 'max:40'], 'password' => ['required', 'string']]);
+        $username = Str::lower(trim($data['login']));
+        $credentials = ['username' => fn ($query) => $query->whereRaw('LOWER(username) = ?', [$username]), 'password' => $data['password'], 'active' => true];
+        if (! Auth::attemptWhen($credentials, fn (User $user) => $user->isAdmin() || $user->isCashier())) {
+            throw ValidationException::withMessages(['login' => 'The username or password is incorrect.']);
         }
         $request->session()->regenerate();
 

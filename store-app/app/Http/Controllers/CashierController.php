@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Support\Text;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -96,27 +97,27 @@ class CashierController extends Controller
 
     private function profileData(Request $request, ?User $cashier = null): array
     {
-        if (is_string($request->input('email'))) {
-            $request->merge(['email' => Str::lower(trim($request->input('email')))]);
+        if (is_string($request->input('username'))) {
+            $request->merge(['username' => Str::lower(trim($request->input('username')))]);
         }
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:100'],
-            'email' => ['bail', 'required', 'string', 'email:rfc', 'max:255', function ($attribute, $value, $fail) use ($cashier) {
-                $existing = User::whereRaw('LOWER(email) = ?', [$value])
+            'username' => ['bail', 'required', 'string', 'regex:/^[A-Za-z0-9-]{3,40}$/', function ($attribute, $value, $fail) use ($cashier) {
+                $existing = User::whereRaw('LOWER(username) = ?', [Str::lower($value)])
                     ->when($cashier, fn ($query) => $query->where('id', '!=', $cashier->id))->exists();
                 if ($existing) {
-                    $fail('This login email is already used by a staff account.');
+                    $fail('This username is already used by a staff account.');
                 }
             }],
             'role' => ['prohibited'],
             'active' => ['prohibited'],
         ]);
 
-        // Name-only edits preserve the exact address on historical accounts.
-        $email = $cashier && Str::lower($cashier->email) === $data['email'] ? $cashier->email : $data['email'];
+        // Name-only edits preserve the exact username on historical accounts.
+        $username = $cashier && $cashier->username !== null && Str::lower($cashier->username) === Str::lower($data['username']) ? $cashier->username : Str::lower($data['username']);
 
-        return ['name' => $data['name'], 'email' => $email];
+        return ['name' => Text::words(trim((string) $data['name'])), 'username' => $username];
     }
 
     private function ensureAdmin(Request $request, ?User $cashier = null): void

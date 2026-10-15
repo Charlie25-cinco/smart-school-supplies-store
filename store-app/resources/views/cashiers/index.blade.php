@@ -7,12 +7,12 @@
         <div class="panel-heading"><div><h2 id="cashier-list-heading">Your cashier team</h2><p>Disable access when needed. Accounts remain linked to their past transactions.</p></div><span class="badge">{{ $cashiers->total() }} {{ $cashiers->total() === 1 ? 'cashier' : 'cashiers' }}</span></div>
         <div class="table-wrap cashier-table-wrap" tabindex="0" role="region" aria-label="Cashier accounts">
             <table class="cashiers-table">
-                <thead><tr><th scope="col">Cashier</th><th scope="col">Login email</th><th scope="col">Access</th><th scope="col">Actions</th></tr></thead>
+                <thead><tr><th scope="col">Cashier</th><th scope="col">Username</th><th scope="col">Access</th><th scope="col">Actions</th></tr></thead>
                 <tbody>
                     @forelse($cashiers as $cashier)
                     <tr data-cashier-id="{{ $cashier->id }}">
                         <td class="cashier-name-cell" data-label="Cashier"><strong>{{ $cashier->name }}</strong><small class="cell-sub">Cashier workspace</small></td>
-                        <td data-label="Login email">{{ $cashier->email }}</td>
+                        <td data-label="Username">{{ $cashier->username }}</td>
                         <td data-label="Access"><span @class(['badge', 'success' => $cashier->active, 'danger' => ! $cashier->active])>{{ $cashier->active ? 'Enabled' : 'Disabled' }}</span></td>
                         <td class="cashier-actions-cell" data-label="Actions"><a class="button secondary" href="{{ route('cashiers.edit', $cashier) }}" aria-label="Manage {{ $cashier->name }}">Manage account</a></td>
                     </tr>

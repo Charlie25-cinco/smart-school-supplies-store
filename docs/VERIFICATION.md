@@ -1,6 +1,78 @@
-# Verification record — 2026-10-14
+# Verification record — 2026-10-15
 
 This is an observed verification record, not a full ISO/IEC/IEEE 29148 compliance claim. Requirement IDs and traceability are in REQUIREMENTS.md; formal independent validation is simplified.
+
+## Milestone 3.1.0 — staff UX package and refunds (unpublished)
+
+The user requested eight staff improvements plus refunds on 2026-10-15 (REQ-044–048; password minimum kept at 12). Three genuine defects were found and fixed during verification: an ambiguous `sales.created_at` join after adding refund totals, guest-state leakage in two new tests, and a topbar toggle button that broke the load-bearing 1366x768 POS fit (moved into the sidebar with a floating reopen control). A nav-order assumption in the 1.1.2 compact-menu check was preserved by pointing that scenario at the Settings page.
+
+| Check | Result | Evidence / limit |
+|---|---|---|
+| PHP tests / formatting | PASS | `composer test`: 101 passed (17 new: 6 refunds, 5 usernames, 4 settings, 2 deletes) against isolated `smart_store_test`. `pint --test` passes on all touched files. |
+| Browser suite | PASS | Sequential `npm.cmd run test:ui` green, including password-visibility toggle, password-requirements indicator (length/suggestions/match), live while-typing capitalization proof, safe-delete and refund and cancel and reset and access-confirm dialogs, sidebar collapse/expand with persistence, settings profile/preferences/visibility, username-only login and creation, and all prior checks. Two implementation defects were caught by verification: an edit that swallowed the eye-icon constant (killed the staff bundle; restored) and a CSS attribute selector that skipped typeless inputs (broadened with fallback coverage). |
+| Local-server suite | PASS | `npm.cmd run test:local` green, including username sign-in for both concurrent cashiers. |
+| Email removal | PASS | Staff email dropped from the users table, login, cashier forms, CLI, factory, fixtures, and all suites (101 PHP + full browser green). Cloud-side email linkage explicitly out of scope and recorded as divergent. |
+| Publication | NOT RUN | No commit or push performed; Cloudflare build and live re-verification are pending. |
+
+Real-database migration (2026-10-15): after a private `mysqldump` + `.env` backup, the 3 pending additive migrations (settings table, username column with backfill, refunds table) were applied to the empty `smart_store` database; all 12 migrations report Ran. Guest `/settings` correctly redirects (302, no longer 500); authenticated rendering awaits the user's Admin creation. Row counts remain zero; no seed, reset, or record change occurred.
+
+Email-drop follow-up: the user's `store:staff` attempt failed correctly against the not-yet-migrated schema (no partial row). After backup + applying `000010`, investigation showed their earlier Admin (Charlie) and one test product already existed from their own session; the backfilled placeholder username was corrected to their stated `charlie25`. No other rows touched.
+
+## Milestone 3.0.0 — Laragon MySQL engine (unpublished)
+
+The user directed a complete switch from SQLite to Laragon MySQL (8.x) on 2026-10-15 (REQ-043); only engine clauses change. MySQL 8.4 installed with a running service and PHP `pdo_mysql` were confirmed read-only first. All application raw SQL was already portable. One genuine engine difference was found and fixed: MySQL does not rewind auto-increment on transaction rollback, so a hardcoded `SS-000001` test assertion now uses the actual sale's receipt number (numbering behavior itself unchanged). A second difference — MySQL returning numeric strings for aggregates — was fixed by integer-casting the isolated fixture inspectors. No business rule changed.
+
+| Check | Result | Evidence / limit |
+|---|---|---|
+| PHP tests / formatting | PASS | `composer test`: 84 passed against isolated `smart_store_test` (credentials resolve from the local ignored `.env`, least-privileged to the test database). `pint --test` passes on all touched files. |
+| Browser suite | PASS | Sequential `npm.cmd run test:ui` green against `smart_store_test` (reset with `migrate:fresh` before fixtures). |
+| Local-server suite | PASS | `npm.cmd run test:local`: all 13 checks green, including concurrent last-unit/duplicate/COD/GCash cases against one MySQL database. |
+| Migrations | PASS | All 9 migrations apply cleanly on the empty `smart_store` database; real database verified empty. |
+| Exporter / preview | PASS | Exporter dry-run and preview/router cycle work against MySQL with read-only usage; live database never written by tooling. |
+| Real-database safety | PASS | Suites touched only `smart_store_test`; the real `smart_store` database was only migrated while empty. The SQLite file and its private backup remain as instant rollback. |
+| Publication | NOT RUN | No commit or push performed; Cloudflare build and live re-verification are pending. |
+
+## Milestone 2.0.4 — fixed corner inquiry pill, floating quick navigation, and icon-only floats (unpublished)
+
+The user accepted a fixed right-bottom Your-list corner pill on all screens (removing the phone full-width dock, modest size increase), a fixed bottom-left Browse quick navigator with section links (a panel search handoff was tried and then removed at the user's request, leaving a links-only panel), and finally icon-only 56px circular floats with a count badge and synced accessible names on 2026-10-14. Real IMS entries do not exist yet, so the sample catalog data and demo labels remain honestly in place. Source and harness changes are verified locally below; commit, Cloudflare publication, and live re-verification remain pending and must occur before this is described as deployed.
+
+| Check | Result | Evidence / limit |
+|---|---|---|
+| Syntax | PASS | `node --check` passes `catalog/app.js`, `config.js`, `cloud-config.js`, and `scripts/verify-ui.mjs`. |
+| Legacy browser / accessibility suite | PASS | Sequential `npm.cmd run test:ui` from `store-app/`: full suite green, including the new `catalog quick navigation` case (geometry at 375/1440, open/first-link focus, links-only panel, link close, Escape restoration), icon-only accessible-name assertions (`Your list, N items` synced with the count badge; named Browse control), and the retained `catalog floating/clear` case at 375/390/768/1024/1440. One pre-existing toolbar-search locator was scoped to `#catalog-search` after the panel briefly added a second Search-supplies field (since removed). Screenshots in ignored `artifacts/`. Native OS copy NOT RUN (harness simulates clipboard writes). Fixtures use fictional records; the real database is untouched. A read-only exporter dry-run confirmed the IMS still holds the 17 sample rows, so no real-data export or demo-flag change was made. |
+| PHP tests / formatting / cloud suites | NOT RUN | No PHP, Supabase, or Edge file changed; staff asset build unchanged. |
+| Publication / live catalog | NOT RUN | No commit or push performed; Cloudflare build and live header/asset/content re-verification are pending. |
+
+## Milestone 2.1.0 — catalog preview launchers and SQLite catalog exporter (unpublished)
+
+| Check | Result | Evidence / limit |
+|---|---|---|
+| Script syntax | PASS | `php -l` passes `scripts/export-catalog-products.php`; PowerShell parser reports zero errors for `scripts/Start-Catalog.ps1` and `scripts/Stop-Catalog.ps1`. |
+| Catalog preview launchers | PASS | Isolated cycle in ignored `.runtime/catalog-test` (port 8081): start in 0.4s serves the catalog brand text, repeat Start reuses the recorded process, Stop ends it, second Stop reports already-stopped. Auto-refresh verified: start writes the SQLite-derived file (0 items from the empty database) and serves it; failure path warns and serves the previous file. Test runtime removed and sample `products.json` restored via Git afterward; store server settings untouched. |
+| SQLite catalog exporter | PASS | Fixture mapping test: active product and service exported, consumable and inactive rows excluded, service stock zeroed, deterministic art/color assigned, empty description fallback accepted. Invalid-row fixture (bad SKU, zero-price service) aborts with no file written. Read-only dry-run against a temp copy of the real database maps all 17 rows; live database and `catalog/products.json` verified untouched afterward. One accidental default-path write during testing was restored via Git; the script now closes the snapshot handle before cleanup. |
+| Legacy browser suite | PASS | Sequential `npm.cmd run test:ui` green after the exporter addition (no catalog source changed by it). |
+| Publication | NOT RUN | No commit or push performed. |
+
+## Milestone 2.2.0 — product photos and card stock info (unpublished)
+
+| Check | Result | Evidence / limit |
+|---|---|---|
+| PHP tests / formatting | PASS | `composer test`: 104 passed (helper unit tests plus round-trip coverage for the save-time normalization), including 6 `ProductImageTest` cases (upload, invalid/oversized rejection, replacement cleanup, removal, staff-only serving, cashier denial), 5 `ProductDetailsTest` cases (description/new-category round-trip, select fallback, blank-category rejection, overlong-description recovery, dropdown rendering), and 7 `RefundTest` cases including dashboard net revenue with refunded totals. `pint --test` passes on all touched files; `php -l` clean. New additive migrations run under `RefreshDatabase`; existing-row preservation follows from the nullable columns. | `pint --test` passes on all touched files; `php -l` clean. New additive migrations run under `RefreshDatabase`; existing-row preservation follows from the nullable columns. |
+| Staff assets | PASS | `npm.cmd run build` succeeds with the thumbnail styles. |
+| Browser suite | PASS | Sequential `npm.cmd run test:ui` green, including new badge assertions (in-stock and running-low lines render; SVG fallback used with no exported photos), the category select plus new-category entry flow, and validation-recovery checks alongside all prior catalog/staff checks. |
+| Exporter photo carry | PASS | Isolated fixture: photo copied to `catalog/assets/products/`, JSON `image` field set, missing photo warns and exports null. Live database and `catalog/products.json` verified untouched; test artifacts removed. |
+| Publication / live catalog | NOT RUN | No commit or push performed; Cloudflare build and live re-verification are pending. |
+
+## Milestone 2.2.1 — live SQLite catalog preview (unpublished)
+
+| Check | Result | Evidence / limit |
+|---|---|---|
+| Syntax | PASS | `php -l` passes `scripts/catalog-items-lib.php`, `scripts/export-catalog-products.php`, and `scripts/catalog-router.php`; PowerShell parser clean for the updated `scripts/Start-Catalog.ps1`. |
+| Live preview | PASS | Isolated router cycle (port 8081): HTTP `/products.json` serves both live SQLite rows while the committed file held one stale row, and `/` serves the page with 200. Plain reloads therefore show new products with no restart. Static serving, reuse, and stop paths verified; test runtime removed. The router lives in `scripts/` and is never published. |
+| Shared mapping | PASS | Exporter refactored onto the same lib with identical output: isolated fixture maps to the same 2 items with consumable/inactive exclusion and zeroed service stock; test artifacts removed. |
+| Photo path fix | PASS | User uploads were proven intact under `storage/app/private/product-images/` (the exporter's old `storage/app/` assumption was wrong). After the fix, a dry-run finds the photo with no warning and the live preview serves the JSON `image` field with the copied 52KB file. Private photo storage is ignore-protected. |
+| Browser suite | PASS | Sequential `npm.cmd run test:ui` green (its own catalog server is unaffected by the router). |
+| Publication | NOT RUN | No commit or push performed. |
 
 ## Milestone 2.0.1 — accepted code-review corrections
 

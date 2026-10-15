@@ -23,7 +23,7 @@ class RoleAccessTest extends TestCase
         foreach (['admin' => '/dashboard', 'cashier' => '/pos'] as $role => $landing) {
             $password = Str::random(20);
             $user = User::factory()->create(['role' => $role, 'password' => $password]);
-            $this->withSession(['url.intended' => '/inventory'])->post('/login', ['email' => $user->email, 'password' => $password])->assertRedirect($landing);
+            $this->withSession(['url.intended' => '/inventory'])->post('/login', ['login' => $user->username, 'password' => $password])->assertRedirect($landing);
             $this->get('/login')->assertRedirect($landing);
             $this->post('/logout')->assertRedirect('/login');
         }
@@ -34,32 +34,32 @@ class RoleAccessTest extends TestCase
         foreach ([['role' => 'cashier', 'active' => false], ['role' => 'unexpected', 'active' => true]] as $attributes) {
             $password = Str::random(20);
             $user = User::factory()->create([...$attributes, 'password' => $password]);
-            $this->post('/login', ['email' => $user->email, 'password' => $password])->assertSessionHasErrors('email');
+            $this->post('/login', ['login' => $user->username, 'password' => $password])->assertSessionHasErrors('login');
             $this->assertGuest();
         }
     }
 
-    public function test_login_email_casing_preserves_legacy_account_addresses(): void
+    public function test_login_username_casing_is_case_insensitive(): void
     {
         foreach (['admin', 'cashier'] as $role) {
             $password = Str::random(20);
-            $email = 'Legacy-'.$role.'@Example.Test';
-            $user = User::factory()->create(['role' => $role, 'email' => $email, 'password' => $password]);
-            $this->post('/login', ['email' => strtoupper($email), 'password' => $password])->assertRedirect($role === 'admin' ? '/dashboard' : '/pos');
+            $username = 'Legacy-'.$role.'-Lead';
+            $user = User::factory()->create(['role' => $role, 'username' => $username, 'password' => $password]);
+            $this->post('/login', ['login' => strtoupper($username), 'password' => $password])->assertRedirect($role === 'admin' ? '/dashboard' : '/pos');
             $this->assertAuthenticatedAs($user);
-            $this->assertSame($email, $user->fresh()->email);
+            $this->assertSame($username, $user->fresh()->username);
             $this->post('/logout');
         }
     }
 
-    public function test_staff_command_rejects_case_variant_of_existing_email(): void
+    public function test_staff_command_rejects_case_variant_of_existing_username(): void
     {
-        User::factory()->create(['email' => 'Legacy-Command@Example.Test']);
+        User::factory()->create(['username' => 'Legacy-Command']);
         $this->artisan('store:staff', ['--role' => 'cashier'])
             ->expectsQuestion('Staff name', 'Demo Cashier')
-            ->expectsQuestion('Login email', 'LEGACY-COMMAND@EXAMPLE.TEST')
+            ->expectsQuestion('Username (letters, numbers, hyphens, 3-40 characters)', 'LEGACY-COMMAND')
             ->expectsQuestion('Password (at least 12 characters)', Str::random(20))
-            ->expectsOutput('The email has already been taken.')
+            ->expectsOutput('The username has already been taken.')
             ->assertFailed();
         $this->assertDatabaseCount('users', 1);
     }
@@ -67,7 +67,7 @@ class RoleAccessTest extends TestCase
     public function test_disabled_existing_session_loses_staff_access(): void
     {
         $cashier = User::factory()->create(['role' => 'cashier', 'active' => false]);
-        $this->actingAs($cashier)->get('/pos')->assertRedirect('/login')->assertSessionHasErrors('email');
+        $this->actingAs($cashier)->get('/pos')->assertRedirect('/login')->assertSessionHasErrors('login');
         $this->assertGuest();
     }
 
@@ -128,7 +128,7 @@ class RoleAccessTest extends TestCase
         $migration->up();
         $this->assertSame('admin', $admin->fresh()->role);
         $this->assertTrue($admin->fresh()->active);
-        foreach (['id', 'name', 'email', 'password', 'created_at'] as $field) {
+        foreach (['id', 'name', 'username', 'password', 'created_at'] as $field) {
             $this->assertSame($account[$field], $admin->fresh()->getAttributes()[$field]);
         }
         $this->assertSame($sale, Sale::firstOrFail()->getAttributes());
@@ -144,11 +144,11 @@ class RoleAccessTest extends TestCase
         $password = Str::random(20);
         $this->artisan('store:staff', ['--role' => 'owner'])
             ->expectsQuestion('Staff name', 'Demo Admin')
-            ->expectsQuestion('Login email', 'admin-command@example.test')
+            ->expectsQuestion('Username (letters, numbers, hyphens, 3-40 characters)', 'demo-admin')
             ->expectsQuestion('Password (at least 12 characters)', $password)
             ->expectsOutput('Staff account created. Sign in using the credentials you entered.')
             ->assertSuccessful();
-        $user = User::where('email', 'admin-command@example.test')->firstOrFail();
+        $user = User::where('username', 'demo-admin')->firstOrFail();
         $this->assertSame('admin', $user->role);
         $this->assertTrue($user->active);
         $this->assertTrue(Hash::check($password, $user->password));

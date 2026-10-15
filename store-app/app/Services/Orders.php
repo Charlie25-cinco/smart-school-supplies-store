@@ -9,6 +9,7 @@ use App\Models\StockMovement;
 use App\Models\User;
 use App\Support\Money;
 use App\Support\Payment;
+use App\Support\Text;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -50,9 +51,9 @@ class Orders
             $order = Order::create([
                 'reference' => $data['reference'], 'user_id' => $user->id, 'channel' => $data['channel'],
                 'fulfillment' => $data['fulfillment'], 'payment_plan' => $data['payment_plan'], 'status' => 'preparing',
-                'customer_name' => $data['customer_name'], 'customer_phone' => $data['customer_phone'],
-                'delivery_address' => $data['fulfillment'] === 'delivery' ? $data['delivery_address'] : null,
-                'notes' => $data['notes'] ?? null, 'subtotal_cents' => $subtotal, 'delivery_fee_cents' => $fee, 'total_cents' => $subtotal + $fee,
+                'customer_name' => Text::words($data['customer_name']), 'customer_phone' => $data['customer_phone'],
+                'delivery_address' => $data['fulfillment'] === 'delivery' ? Text::words($data['delivery_address']) : null,
+                'notes' => isset($data['notes']) ? Text::words($data['notes']) : null, 'subtotal_cents' => $subtotal, 'delivery_fee_cents' => $fee, 'total_cents' => $subtotal + $fee,
             ]);
             $order->items()->createMany($lines);
             if ($data['payment_plan'] === 'prepaid') {
@@ -122,9 +123,9 @@ class Orders
                 throw ValidationException::withMessages(['edit_token' => 'This order changed while you were editing. Reload the edit page and review the latest details.']);
             }
             $details = [
-                'customer_name' => $data['customer_name'], 'customer_phone' => $data['customer_phone'],
-                'delivery_address' => $order->fulfillment === 'delivery' ? $data['delivery_address'] : null,
-                'notes' => $data['notes'] ?? null,
+                'customer_name' => Text::words($data['customer_name']), 'customer_phone' => $data['customer_phone'],
+                'delivery_address' => $order->fulfillment === 'delivery' ? Text::words($data['delivery_address']) : null,
+                'notes' => isset($data['notes']) ? Text::words($data['notes']) : null,
             ];
             if ($order->sale_id) {
                 if (array_key_exists('items', $data) || array_key_exists('delivery_fee', $data)) {
@@ -229,7 +230,7 @@ class Orders
             }
             if ($status === 'cancelled') {
                 if ($order->sale_id || in_array($order->status, ['completed', 'cancelled'], true)) {
-                    throw ValidationException::withMessages(['status' => 'Only an unpaid, unfinished order can be cancelled. Paid refunds need a separate process.']);
+                    throw ValidationException::withMessages(['status' => 'Only an unpaid, unfinished order can be cancelled. Paid sales need a recorded refund.']);
                 }
                 if (! trim($reason ?? '') || ($order->status === 'out_for_delivery' && ! $returned)) {
                     throw ValidationException::withMessages(['cancel_reason' => 'Enter a reason and confirm returned goods for a dispatched order.']);
@@ -239,7 +240,7 @@ class Orders
                         throw ValidationException::withMessages(['items' => 'Reservation is inconsistent; ask the owner to review inventory.']);
                     }
                 }
-                $order->update(['status' => 'cancelled', 'cancel_reason' => $reason]);
+                $order->update(['status' => 'cancelled', 'cancel_reason' => Text::words($reason, 300)]);
             } else {
                 $next = match ($order->status) {
                     'preparing' => 'ready',

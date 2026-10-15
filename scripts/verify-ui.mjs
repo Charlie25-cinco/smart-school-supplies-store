@@ -27,12 +27,14 @@ mkdirSync(artifacts, { recursive: true });
 const views = resolve(artifacts, 'ui-views');
 mkdirSync(views, { recursive: true });
 const database = resolve(artifacts, 'ui-test.sqlite');
-for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(database + suffix, { force: true });
-writeFileSync(database, '');
+// The project database engine is Laragon MySQL; the isolated browser suite
+// uses smart_store_test and resets it with migrate:fresh (credentials resolve
+// from the local ignored .env, least-privileged to the test database).
+const freshMysql = spawnSync(process.env.PHP_EXECUTABLE || 'php', ['artisan', 'migrate:fresh', '--force'], { cwd: app, env: { ...process.env, APP_ENV: 'testing', APP_DEBUG: 'false', APP_KEY: `base64:${randomBytes(32).toString('base64')}`, DB_CONNECTION: 'mysql', DB_DATABASE: 'smart_store_test', DB_URL: '', CACHE_STORE: 'array', SESSION_DRIVER: 'database' }, encoding: 'utf8', windowsHide: true });
+assert.equal(freshMysql.status, 0, 'Isolated MySQL fixture reset failed.');
 const password = randomBytes(24).toString('hex');
 const managedPassword = randomBytes(24).toString('hex');
-const managedEmail = 'managed-cashier@example.test';
-const env = { ...process.env, APP_ENV: 'testing', APP_DEBUG: 'false', APP_KEY: `base64:${randomBytes(32).toString('base64')}`, DB_CONNECTION: 'sqlite', DB_DATABASE: database, DB_URL: '', CACHE_STORE: 'array', SESSION_DRIVER: 'database', VIEW_COMPILED_PATH: views, STORE_DEMO: 'true', UI_PASSWORD: password };
+const env = { ...process.env, APP_ENV: 'testing', APP_DEBUG: 'false', APP_KEY: `base64:${randomBytes(32).toString('base64')}`, DB_CONNECTION: 'mysql', DB_DATABASE: 'smart_store_test', DB_URL: '', CACHE_STORE: 'array', SESSION_DRIVER: 'database', VIEW_COMPILED_PATH: views, STORE_DEMO: 'true', UI_PASSWORD: password };
 const php = process.env.PHP_EXECUTABLE || 'php';
 const fixture = spawnSync(php, [resolve(root, 'scripts/ui-fixture.php')], { cwd: app, env, encoding: 'utf8', windowsHide: true });
 assert.equal(fixture.status, 0, 'Isolated browser fixture setup failed.');
@@ -58,6 +60,11 @@ try {
     browser = await chromium.launch({ executablePath: executable, headless: true });
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage();
+    // Catalog tests run against a committed sample fixture: the source
+    // products.json now mirrors the (empty) store database instead.
+    const fixtureProducts = readFileSync(resolve(root, 'scripts/fixtures/sample-catalog.json'), 'utf8');
+    const fulfillFixtureProducts = () => page.route('**/products.json', route => route.fulfill({ status: 200, contentType: 'application/json', headers: catalogHeaders, body: fixtureProducts }));
+    await fulfillFixtureProducts();
     const errors = [];
     const fonts = [];
     const catalogPolicyErrors=[];
@@ -100,7 +107,7 @@ try {
     };
     const login = async role => {
         await page.goto(`${appUrl}/login`);
-        await page.getByLabel('Email address').fill(`${role}@example.test`);
+        await page.getByLabel('Username').fill(role);
         await page.getByLabel('Password', {exact:true}).fill(password);
         await page.getByRole('button', {name:/Sign in/}).click();
         await page.waitForURL(`**/${role==='admin'?'dashboard':'pos'}`);
@@ -276,11 +283,11 @@ try {
             await brand.focus(); await fullyVisible(brand,`${role} long-name return to brand`);
         } finally { await staffName.evaluate((element,value)=>element.textContent=value,previousName); }
         checks.push(`${role} sidebar: 400/480px whole-panel keyboard recovery and long fictional account-name layout PASS`);
-        await page.goto(`${appUrl}/sales`);
+        await page.goto(`${appUrl}/settings`);
         for(const width of [375,768,1024]) {
             await setViewport({width,height:600});
             await page.evaluate(()=>window.scrollTo(0,0));
-            await compactNavigation(`${role} sales menu ${width}px`);
+            await compactNavigation(`${role} settings menu ${width}px`);
             await page.locator('#workspace-menu-open').click();
             const current=page.locator('#workspace-menu nav a[aria-current=page]');
             assert.equal(await current.evaluate(element=>element===element.parentElement.lastElementChild),true,`${role}: resize scenario did not use the last current link`);
@@ -393,6 +400,8 @@ try {
             await setViewport({width,height:1000});
             await page.getByRole('button',{name:'Add Black Ballpen to your list',exact:true}).click();
             assert.equal(await page.locator('#floating-basket-count').textContent(),await page.locator('#basket-count').textContent(),'Floating count differs from inquiry count');
+            const announcedCount=await page.locator('#basket-count').textContent();
+            assert.equal(await floating.getAttribute('aria-label'),`Your list, ${announcedCount} ${announcedCount==='1'?'item':'items'}`,'Floating accessible name does not expose the inquiry count');
             await page.locator('#catalog-toast').waitFor({state:'visible'});
             await page.evaluate(()=>window.scrollTo({top:document.documentElement.scrollHeight,behavior:'instant'}));
             const box=await floating.boundingBox();
@@ -411,10 +420,39 @@ try {
             assert.ok(Math.abs(await page.evaluate(()=>scrollY)-before)<=1,'Closing floating inquiry moved the main page');
             await page.screenshot({path:resolve(artifacts,'catalog-floating-footer-'+width+'.png'),fullPage:true,animations:'disabled'});
         }
+        const quickNav=page.locator('#floating-nav'), quickPanel=page.locator('#quick-nav-panel');
+        assert.equal(await quickNav.getAttribute('aria-label'),'Browse sections','Quick navigation has no accessible name');
+        assert.equal(await quickPanel.isHidden(),true,'Quick navigation panel is visible before opening');
+        assert.equal(await quickNav.getAttribute('aria-expanded'),'false');
+        for(const width of [375,1440]) {
+            await setViewport({width,height:1000});
+            const navBox=await quickNav.boundingBox();
+            assert.ok(navBox && navBox.height>=44 && navBox.x>=-1 && navBox.y>=-1 && navBox.x+navBox.width<=width+1 && navBox.y+navBox.height<=1001,'Quick navigation control is clipped or too small at '+width);
+            assert.equal(overlaps(navBox,await floating.boundingBox()),false,'Quick navigation overlaps the inquiry control at '+width);
+            const pageLinks=await page.locator('.site-footer a').evaluateAll(links=>links.map(link=>{const rect=link.getBoundingClientRect();return {x:rect.x,y:rect.y,width:rect.width,height:rect.height};}));
+            assert.ok(pageLinks.every(link=>!overlaps(navBox,link)),'Quick navigation covers footer links at '+width);
+        }
+        await setViewport({width:1440,height:1000});
+        await quickNav.click();
+        assert.equal(await quickPanel.isVisible(),true,'Quick navigation panel did not open');
+        assert.equal(await quickNav.getAttribute('aria-expanded'),'true');
+        assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'Shop supplies','Quick navigation did not focus its first link');
+        assert.equal(await page.locator('#quick-search, #quick-search-go').count(),0,'Panel search was not removed');
+        await quickPanel.getByRole('link',{name:'Academic services'}).click();
+        assert.equal(await quickPanel.isHidden(),true,'Section link did not close the navigation panel');
+        const navBefore=await page.evaluate(()=>scrollY);
+        await quickNav.click();
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(()=>document.activeElement===document.getElementById('floating-nav'));
+        assert.ok(Math.abs(await page.evaluate(()=>scrollY)-navBefore)<=1,'Closing quick navigation moved the main page');
+        checks.push('catalog quick navigation: geometry at 375/1440, open/focus, links-only panel, link close, Escape restoration PASS');
         await floating.click();
         await page.getByLabel('How would you like to receive your order?').selectOption({label:'Nearby delivery · fee confirmed by staff'});
         await copyCurrent(expectedCatalogPage);
         await page.evaluate(()=>localStorage.setItem('catalog-unrelated-test','preserved'));
+        await page.locator('#clear-basket').click();
+        assert.equal(await page.locator('#clear-basket').textContent(),'Confirm clear','Clear did not arm its confirmation step');
+        assert.equal(await page.locator('#basket-empty').isVisible(),false,'Armed clear emptied the list early');
         await page.locator('#clear-basket').click();
         assert.equal(await page.locator('#clear-basket').isVisible(),true,'Clear action disappeared with empty details');
         assert.equal(await page.locator('#clear-basket').isDisabled(),true,'Empty list leaves clear enabled');
@@ -430,7 +468,7 @@ try {
         await page.reload(); await page.waitForSelector('.product-card');
         assert.equal(await page.locator('#basket-count').textContent(),'0','Cleared list returned after reload');
         assert.equal(await page.evaluate(()=>localStorage.getItem('catalog-unrelated-test')),'preserved');
-        checks.push('catalog floating/clear: counts, 44px footer/toast-safe dock, keyboard/modal/scroll restoration at 375/390/768/1024/1440 and list-only persistent clearing PASS');
+        checks.push('catalog floating/clear: counts, 44px footer/toast-safe dock, two-step clear confirmation, keyboard/modal/scroll restoration at 375/390/768/1024/1440 and list-only persistent clearing PASS');
     };
     const catalogResponse=await page.goto(catalogUrl);
     assert.ok(catalogResponse,'Catalog document response missing.');
@@ -450,16 +488,26 @@ try {
     await setViewport({width:1440,height:1000});
     await page.getByRole('button', { name: 'Writing essentials', exact: true }).click();
     assert.equal(await page.locator('.product-card').count(), 3);
-    await page.getByLabel('Search supplies').fill('no-match');
+    await page.getByRole('button', { name: 'All supplies', exact: true }).click();
+    const stockLines = await page.locator('.product-card .catalog-availability').allTextContents();
+    assert.ok(stockLines.some(text => text.startsWith('In stock · ')), 'No in-stock availability line rendered');
+    assert.ok(stockLines.some(text => text.startsWith('Running low · ')), 'No running-low availability line rendered');
+    assert.equal(await page.locator('.product-art img').count(), 0, 'Photo fallback rendered an image without exported photos');
+    await page.locator('#catalog-search').fill('no-match');
     await page.locator('#catalog-empty').waitFor({state:'visible'});
     await page.getByRole('button', {name:'Show all supplies'}).click();
+    await page.route('**/products.json', route => route.fulfill({ status: 200, contentType: 'application/json', headers: catalogHeaders, body: fixtureProducts.replace('Spiral Notebook', 'Spiral Notebook Fresh') }));
+    await page.reload(); await page.waitForSelector('.product-card');
+    assert.ok((await page.getByText('Spiral Notebook Fresh').count()) > 0, 'Plain reload did not show the refreshed catalog file');
+    await page.unroute('**/products.json'); await fulfillFixtureProducts();
+    await page.reload(); await page.waitForSelector('.product-card');
     await page.getByRole('button', {name:'Add Spiral Notebook to your list', exact:true}).click();
     await page.getByRole('button', {name:'Add Spiral Notebook to your list', exact:true}).click();
     await page.getByRole('button', {name:'Add Black Ballpen to your list', exact:true}).click();
     await page.locator('.basket-button').click();
     assert.equal(await page.locator('#basket-total').textContent(), '₱102.00');
     assert.equal(await page.evaluate(()=>window.STORE_CONFIG.messengerUrl),expectedCatalogPage,'Catalog does not use the approved Facebook Page.');
-    assert.equal(await page.evaluate(()=>window.STORE_CONFIG.demo),true,'Public preview lost its sample-data designation.');
+    assert.equal(await page.evaluate(()=>window.STORE_CONFIG.demo),false,'Public preview still carries its sample-data designation.');
     const pageLink=page.locator('#open-messenger');
     await gateLocked('Initial configured inquiry');
     await page.getByRole('button',{name:'Copy summary',exact:true}).focus();
@@ -474,7 +522,7 @@ try {
     assert.equal(await pageLink.getAttribute('target'),'_blank');
     assert.deepEqual((await pageLink.getAttribute('rel')).split(/\s+/).sort(),['noopener','noreferrer']);
     assert.equal(await page.locator('#messenger-unconfigured').isVisible(),false,'Configured Page still shows missing-link guidance.');
-    assert.equal(await page.locator('#demo-badge').isVisible(),true,'Sample catalog label hidden.');
+    assert.equal(await page.locator('#demo-badge').isHidden(),true,'Sample catalog label shown.');
     await page.getByLabel('How would you like to receive your order?').selectOption({label:'Nearby delivery · fee confirmed by staff'});
     assert.match(await page.locator('#order-summary').inputValue(), /Nearby delivery/);
     await gateLocked('Changed fulfillment');
@@ -570,7 +618,7 @@ try {
     await page.unroute('**/config.js');
     await page.route('**/products.json', route => route.fulfill({status:503,headers:catalogHeaders,body:'Unavailable'}));
     await page.reload(); await page.locator('#catalog-error').waitFor({state:'visible'});
-    await page.unroute('**/products.json'); await page.getByRole('button', {name:'Try again'}).click(); await page.waitForSelector('.product-card');
+    await page.unroute('**/products.json'); await fulfillFixtureProducts(); await page.getByRole('button', {name:'Try again'}).click(); await page.waitForSelector('.product-card');
     assert.deepEqual(catalogPolicyErrors,[],'Catalog browser rejected assets or code under Cloudflare security headers.');
     assert.deepEqual(forbiddenCatalogRequests,[],'Catalog attempted an external Meta or local staff/private-data request.');
     checks.push('catalog: filtering, empty/error recovery, basket persistence, summary, link and keyboard dialog PASS');
@@ -579,12 +627,25 @@ try {
 
     await page.goto(`${appUrl}/login`);
     await accessibility('login'); await responsive('login');
-    await page.getByLabel('Email address').fill('admin@example.test');
+    await page.getByRole('button',{name:'Show password',exact:true}).click();
+    assert.equal(await page.locator('#password').getAttribute('type'),'text','Password visibility toggle did not reveal the password');
+    await page.getByRole('button',{name:'Hide password',exact:true}).click();
+    assert.equal(await page.locator('#password').getAttribute('type'),'password','Password visibility toggle did not hide the password');
+    await page.getByLabel('Username').fill('admin');
     await page.getByLabel('Password', {exact:true}).fill(password);
     await page.getByRole('button', {name:/Sign in/}).click();
     await page.waitForURL('**/dashboard');
     await accessibility('dashboard'); await responsive('dashboard');
     await sidebarWorkflow('Admin');
+    await setViewport({width:1366,height:768});
+    await page.getByRole('button',{name:'Collapse sidebar',exact:true}).click();
+    assert.equal(await page.locator('.sidebar').isHidden(),true,'Sidebar toggle did not collapse the sidebar');
+    assert.equal(await page.evaluate(()=>localStorage.getItem('store-sidebar-collapsed')),'1','Sidebar collapse was not remembered');
+    await page.reload(); await page.waitForSelector('.topbar-context');
+    assert.equal(await page.locator('.sidebar').isHidden(),true,'Sidebar collapse did not persist across reload');
+    await page.getByRole('button',{name:'Expand sidebar',exact:true}).click();
+    assert.equal(await page.locator('.sidebar').isVisible(),true,'Sidebar toggle did not restore the sidebar');
+    checks.push('sidebar toggle: collapse/expand, persistence and restoration at desktop width PASS');
     await setViewport({width:1366, height:768});
     await readableScreen('empty dashboard');
     await page.screenshot({path:resolve(artifacts,'dashboard-1366x768.png'),fullPage:true});
@@ -600,18 +661,26 @@ try {
     await accessibility('cashier-accounts'); await responsive('cashier-accounts');
     await page.getByRole('link',{name:/Add cashier/}).click();
     await accessibility('cashier-create'); await responsive('cashier-create');
+    await page.locator('#cashier-password').fill('short');
+    assert.equal(await page.locator('.password-checks li[data-check=length].met').count(),0,'Short password shows length requirement met');
+    await page.locator('#cashier-password').fill('Long-Enough-1234');
+    assert.equal(await page.locator('.password-checks li[data-check=length].met').count(),1,'Valid password misses length requirement');
+    assert.equal(await page.locator('.password-checks li[data-check=upper].met').count(),1,'Uppercase suggestion missed');
+    await page.locator('#cashier-password-confirmation').fill('Long-Enough-1234');
+    assert.equal(await page.locator('.password-checks li[data-check=match].met').count(),1,'Matching confirmation not recognized');
+    checks.push('password indicator: length, suggestions and confirmation match PASS');
     await page.locator('#cashier-name').fill('Managed Demo Cashier');
-    await page.locator('#cashier-email').fill('initial-cashier@example.test');
+    await page.locator('#cashier-username').fill('managed-demo');
     await page.locator('#cashier-password').fill(password);
     await page.locator('#cashier-password-confirmation').fill(password);
     await page.getByRole('button',{name:'Create cashier account',exact:true}).click();
     await page.waitForURL('**/cashiers');
-    await page.locator('tr[data-cashier-id]').filter({hasText:'initial-cashier@example.test'}).getByRole('link',{name:'Manage Managed Demo Cashier',exact:true}).click();
+    await page.locator('tr[data-cashier-id]').filter({hasText:'managed-demo'}).getByRole('link',{name:'Manage Managed Demo Cashier',exact:true}).click();
     await page.waitForURL(/\/cashiers\/\d+\/edit$/);
     const managedEditUrl=page.url();
     await accessibility('cashier-manage'); await responsive('cashier-manage');
     await page.locator('#cashier-name').fill('Updated Demo Cashier');
-    await page.locator('#cashier-email').fill(managedEmail);
+    await page.locator('#cashier-username').fill('managed-demo-lead');
     await page.getByRole('button',{name:'Save cashier details',exact:true}).click();
     await page.waitForURL(managedEditUrl);
     assert.equal(await page.locator('#cashier-name').inputValue(),'Updated Demo Cashier');
@@ -620,29 +689,49 @@ try {
         const managedPage=await managedContext.newPage();
         const managedLogin=async secret=>{
             await managedPage.goto(`${appUrl}/login`);
-            await managedPage.getByLabel('Email address').fill(managedEmail);
+            await managedPage.getByLabel('Username').fill('managed-demo-lead');
             await managedPage.getByLabel('Password',{exact:true}).fill(secret);
             await managedPage.getByRole('button',{name:/Sign in/}).click();
         };
         await managedLogin(password); await managedPage.waitForURL('**/pos');
         await page.locator('#reset-password').fill(managedPassword);
         await page.locator('#reset-password-confirmation').fill(managedPassword);
-        await page.getByRole('button',{name:'Reset password & end sessions',exact:true}).click();
+        await page.locator('#reset-password-form').getByRole('button',{name:'Reset password & end sessions',exact:true}).click();
+        await page.locator('#confirm-reset-password').getByRole('button',{name:'Reset password & end sessions',exact:true}).click();
         await page.waitForURL(managedEditUrl);
         await managedPage.goto(`${appUrl}/pos`); await managedPage.waitForURL('**/login');
         await managedLogin(password); await managedPage.getByRole('alert').waitFor();
         assert.match(new URL(managedPage.url()).pathname,/\/login$/,'Reset password did not reject old password');
         await managedLogin(managedPassword); await managedPage.waitForURL('**/pos');
-        await page.getByRole('button',{name:'Disable cashier account',exact:true}).click();
+        await page.locator('#cashier-status-form').getByRole('button',{name:'Disable cashier account',exact:true}).click();
+        await page.locator('#confirm-cashier-status').getByRole('button',{name:'Disable cashier account',exact:true}).click();
         await page.waitForURL(managedEditUrl);
         await managedPage.goto(`${appUrl}/pos`); await managedPage.waitForURL('**/login');
         await managedLogin(managedPassword); await managedPage.getByRole('alert').waitFor();
         assert.match(new URL(managedPage.url()).pathname,/\/login$/,'Disabled cashier could sign in');
-        await page.getByRole('button',{name:'Enable cashier account',exact:true}).click();
+        await page.locator('#cashier-status-form').getByRole('button',{name:'Enable cashier account',exact:true}).click();
+        await page.locator('#confirm-cashier-status').getByRole('button',{name:'Enable cashier account',exact:true}).click();
         await page.waitForURL(managedEditUrl);
         await managedLogin(managedPassword); await managedPage.waitForURL('**/pos');
     } finally { await managedContext.close(); }
     checks.push('cashier accounts: Admin creates/edits/enables/disables, reset rejects old password and ends sessions, disabled sessions lose access PASS');
+    await page.goto(`${appUrl}/settings`);
+    await accessibility('settings'); await responsive('settings');
+    await page.getByLabel('Display name').fill('Demo Store Admin');
+    await page.getByRole('button',{name:'Save name',exact:true}).click();
+    await page.waitForURL('**/settings');
+    assert.match(await page.locator('.profile').first().textContent(),/Demo Store Admin/);
+    await page.getByLabel('Default reorder level (units)').fill('25');
+    await page.getByLabel('Receipt note').fill('Demo receipt note');
+    await page.getByRole('button',{name:'Save preferences',exact:true}).click();
+    await page.waitForURL('**/settings');
+    assert.equal(await page.locator('#settings-reorder').inputValue(),'25');
+    assert.equal(await page.locator('#settings-receipt-note').inputValue(),'Demo Receipt Note');
+    await page.goto(`${appUrl}/settings`);
+    await page.getByLabel('Display name').fill('Demo Admin');
+    await page.getByRole('button',{name:'Save name',exact:true}).click();
+    await page.waitForURL('**/settings');
+    checks.push('settings: profile name, store preferences and receipt note PASS');
     assert.equal(await page.getByRole('link',{name:'Point of sale',exact:true}).count(),0,'Admin has a checkout navigation action');
     assert.equal((await page.request.get(`${appUrl}/pos`)).status(),403,'Admin can open POS directly');
     const adminToken=await page.locator('form[action$="/logout"] input[name=_token]').first().inputValue();
@@ -652,6 +741,18 @@ try {
     for (const path of ['/dashboard','/inventory','/cashiers']) assert.equal((await page.request.get(appUrl+path)).status(),403,`Cashier can access ${path}`);
     checks.push('roles: distinct landing pages/navigation, Admin checkout denial and Cashier management denial PASS');
     await sidebarWorkflow('Cashier');
+    await page.getByRole('link',{name:'Settings',exact:true}).click();
+    await page.waitForURL('**/settings');
+    assert.equal(await page.locator('#settings-reorder').count(),0,'Cashier sees admin preferences');
+    await page.getByLabel('Display name').fill('Demo Counter Cashier');
+    await page.getByRole('button',{name:'Save name',exact:true}).click();
+    await page.waitForURL('**/settings');
+    assert.match(await page.locator('.profile').first().textContent(),/Demo Counter Cashier/);
+    await page.getByLabel('Display name').fill('Demo Cashier');
+    await page.getByRole('button',{name:'Save name',exact:true}).click();
+    await page.waitForURL('**/settings');
+    checks.push('settings visibility: cashier profile without admin preferences PASS');
+    await page.goto(`${appUrl}/pos`);
     await accessibility('pos'); await responsive('pos');
     assert.equal(await page.locator('#cash').evaluate(el=>el.closest('.checkout-scroll')===null),true,'Payment must remain outside basket scrolling');
     assert.equal(await page.evaluate(async()=>{await document.fonts.ready;return document.fonts.check('16px Inter');}),true,'Bundled staff font unavailable');
@@ -730,12 +831,19 @@ try {
     assert.ok((await page.locator('.receipt').boundingBox()).width<=303,'Printed receipt exceeds approximately 80mm');
     assert.equal(await page.locator('.sidebar').isVisible(),false,'Navigation appears on printed receipt');
     await page.screenshot({path:resolve(artifacts,'receipt-print.png'),fullPage:true}); await page.emulateMedia({media:'screen'});
+    await page.getByLabel('Refund reason').fill('Demo refund reason');
+    await page.locator('#refund-form').getByRole('button',{name:'Record refund',exact:true}).click();
+    assert.equal(await page.locator('#confirm-refund').isVisible(),true,'Refund confirmation did not open');
+    await page.locator('#confirm-refund').getByRole('button',{name:'Cancel',exact:true}).click();
+    assert.equal(await page.locator('#confirm-refund').isHidden(),true,'Refund cancellation did not close');
+    assert.equal(await page.locator('#refund-form').isVisible(),true,'Cancelled refund lost its form');
+    checks.push('refund dialog: confirmation opens, cancellation preserves the sale PASS');
     const receiptUrl = page.url();
     const otherContext=await browser.newContext();
     try {
         const otherPage=await otherContext.newPage();
         await otherPage.goto(`${appUrl}/login`);
-        await otherPage.getByLabel('Email address').fill(managedEmail);
+        await otherPage.getByLabel('Username').fill('managed-demo-lead');
         await otherPage.getByLabel('Password',{exact:true}).fill(managedPassword);
         await otherPage.getByRole('button',{name:/Sign in/}).click(); await otherPage.waitForURL('**/pos');
         assert.equal((await otherPage.request.get(receiptUrl)).status(),403,'Another cashier can read receipt');
@@ -788,13 +896,21 @@ try {
     await setViewport({width:1366,height:768});
     await readableScreen('add-item form');
     await page.screenshot({path:resolve(artifacts,'item-form-1366x768.png'),fullPage:true});
-    await page.getByLabel('Item name').fill('Demo supply'); await page.getByLabel('SKU',{exact:true}).fill('NB-001'); await page.getByLabel('Category',{exact:true}).fill('Paper'); await page.getByLabel('Selling price (₱)').fill('15.50'); await page.getByLabel('Opening stock (units)').fill('20');
+    await page.getByLabel('Item name').fill('Demo supply'); await page.getByLabel('SKU',{exact:true}).fill('NB-001'); await page.getByLabel('Category',{exact:true}).selectOption({index:0}); await page.getByLabel('Selling price (₱)').fill('15.50'); await page.getByLabel('Opening stock (units)').fill('20');
     await page.getByRole('checkbox',{name:/Active/}).uncheck();
     await page.getByRole('button',{name:'Add item',exact:true}).click();
     await page.getByRole('alert').waitFor();
     assert.equal(await page.getByRole('checkbox',{name:/Active/}).isChecked(), false);
     await page.getByLabel('SKU',{exact:true}).fill('DEMO-UI');
     await page.getByRole('button',{name:'Add item',exact:true}).click(); await page.waitForURL('**/inventory');
+    await page.getByLabel('Search inventory',{exact:true}).fill('DEMO-UI');
+    await page.locator('table').first().getByRole('row').filter({hasText:'DEMO-UI'}).getByRole('link',{name:'Edit'}).click();
+    await page.waitForURL(/\/inventory\/\d+\/edit$/);
+    await page.getByRole('button',{name:'Delete item',exact:true}).click();
+    assert.equal(await page.locator('#delete-item').isVisible(),true,'Delete confirmation did not open');
+    await page.locator('#delete-item').getByRole('button',{name:'Keep item',exact:true}).click();
+    assert.equal(await page.locator('#delete-item').isHidden(),true,'Delete cancellation did not close');
+    checks.push('inventory delete: confirmation opens, cancellation preserves the item PASS');
     await page.getByRole('link',{name:'Sales reports',exact:true}).click();
     await accessibility('sales'); await responsive('sales');
     assert.match(await page.locator('main').textContent(), /₱102.00/);
@@ -831,7 +947,7 @@ try {
     assert.equal(await page.getByLabel('Quantity of Spiral Notebook',{exact:true}).inputValue(),'1','Changing pane lost basket');
     assert.equal(await page.getByLabel('Quantity of Black & White Printing · page',{exact:true}).inputValue(),'2','Changing pane lost service quantity');
     await page.locator('#edit-order-details').click();
-    assert.equal(await page.getByLabel('Delivery address',{exact:true}).inputValue(),'Demo school gate','Changing pane lost delivery details');
+    assert.equal(await page.getByLabel('Delivery address',{exact:true}).inputValue(),'Demo School Gate','Changing pane lost delivery details');
     await page.keyboard.press('Escape');
     await posPane('sale');
     assert.equal(await page.locator('#cart-total').textContent(),'₱71.00');
@@ -846,7 +962,7 @@ try {
     await page.getByRole('button',{name:'Use these details',exact:true}).click();
     await page.getByRole('button',{name:/Confirm order/}).click();
     await page.locator('#order-details-dialog[data-modal-reopen][open]').waitFor();
-    assert.equal(await page.getByLabel('Delivery address',{exact:true}).inputValue(),'Demo school gate','Rejected delivery details were lost');
+    assert.equal(await page.getByLabel('Delivery address',{exact:true}).inputValue(),'Demo School Gate','Rejected delivery details were lost');
     await page.getByLabel('Customer name',{exact:true}).fill('Demo Delivery Customer');
     await page.getByRole('button',{name:'Use these details',exact:true}).click();
     checks.push('order details: Escape/focus return, required-field dialog reopening and server validation recovery PASS');
@@ -857,7 +973,7 @@ try {
     try {
         const review=await reviewContext.newPage();
         await review.goto(`${appUrl}/login`);
-        await review.getByLabel('Email address').fill('admin@example.test');
+        await review.getByLabel('Username').fill('admin');
         await review.getByLabel('Password',{exact:true}).fill(password);
         await review.getByRole('button',{name:/Sign in/}).click(); await review.waitForURL('**/dashboard');
         await review.goto(orderUrl);
@@ -910,7 +1026,7 @@ try {
     await page.getByRole('button',{name:'Save changes',exact:true}).click();
     await page.getByRole('alert').waitFor();
     assert.match(await page.getByRole('alert').textContent(),/Insufficient available stock/);
-    assert.equal(await page.getByLabel('Delivery address',{exact:true}).inputValue(),'Updated demo school gate');
+    assert.equal(await page.getByLabel('Delivery address',{exact:true}).inputValue(),'Updated Demo School Gate');
     assert.equal(await page.getByLabel('Delivery fee (₱)',{exact:true}).inputValue(),'25');
     await page.getByLabel('Quantity of Spiral Notebook',{exact:true}).fill('2');
     await page.getByRole('button',{name:'Save changes',exact:true}).click();
@@ -1039,7 +1155,8 @@ try {
     await page.getByRole('button',{name:/Confirm order/}).click();
     await page.waitForURL(/\/orders\/\d+$/);
     await page.getByLabel('Cancellation reason').fill('Demo cancellation');
-    await page.getByRole('button',{name:'Cancel order',exact:true}).click();
+    await page.locator('#cancel-order-form').getByRole('button',{name:'Cancel order',exact:true}).click();
+    await page.locator('#confirm-cancel-order').getByRole('button',{name:'Cancel order',exact:true}).click();
     assert.match(await page.locator('main').textContent(),/reservation was released/);
     // Admin records actual internal supply usage, with no supply in POS.
     await signout(); await login('admin');
@@ -1047,7 +1164,8 @@ try {
     await page.getByRole('link',{name:/Add item/}).click();
     await page.getByLabel('Item name').fill('Demo printing paper');
     await page.getByLabel('SKU',{exact:true}).fill('DEMO-INTERNAL');
-    await page.getByLabel('Category',{exact:true}).fill('Printing supplies');
+    await page.getByLabel('Category',{exact:true}).selectOption({index:0});
+    await page.getByLabel('Or new category').fill('Printing supplies');
     await page.getByLabel('Item type').selectOption('consumable');
     await page.getByLabel('Selling price (₱)').fill('0');
     await page.getByLabel('Opening stock (units)').fill('50');
@@ -1055,7 +1173,7 @@ try {
     await page.waitForURL('**/inventory');
     await page.getByLabel('Search inventory',{exact:true}).fill('Demo printing paper');
     await page.getByRole('button',{name:'Apply filters',exact:true}).click();
-    const internal = page.locator('table').first().getByRole('row').filter({has:page.getByText('Demo printing paper',{exact:true})});
+    const internal = page.locator('table').first().getByRole('row').filter({has:page.getByText('Demo Printing Paper',{exact:true})});
     await internal.getByRole('button',{name:'Record usage',exact:true}).click();
     const usage = page.locator('dialog[open]');
     // Exercise server rejection/recovery even if a stale client permits excess units.
@@ -1065,10 +1183,11 @@ try {
     await usage.getByRole('button',{name:'Record usage',exact:true}).click();
     await page.locator('dialog[data-modal-reopen][open]').waitFor();
     assert.equal(await usage.getByLabel('Quantity used').inputValue(),'51');
-    assert.equal(await usage.getByLabel('Usage reason').inputValue(),'Demo printing job');
+    assert.equal(await usage.getByLabel('Usage reason').inputValue(),'Demo Printing Job');
     assert.match(await usage.getByRole('alert').textContent(), /exceeds available/);
     await usage.getByLabel('Quantity used').fill('10');
     await usage.getByLabel('Usage reason').fill('Demo printing job');
+    assert.equal(await usage.getByLabel('Usage reason').inputValue(),'Demo Printing Job','Live capitalization did not title-case while typing');
     await accessibility('usage-dialog');
     const usageValidity = await usage.locator('form').evaluate(form => ({valid:form.checkValidity(),invalid:[...form.elements].filter(input => input.willValidate && !input.validity.valid).map(input => ({name:input.name,message:input.validationMessage}))}));
     assert.equal(usageValidity.valid,true,JSON.stringify(usageValidity.invalid));

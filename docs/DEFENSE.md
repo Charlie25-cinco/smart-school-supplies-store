@@ -37,7 +37,7 @@ Before dispatch, open **Edit order** to correct the address/notes. On an unpaid 
 
 ## Questions you may receive
 
-**Why SQLite?** One store computer hosts the database; multiple browser clients access it through Laravel. Short transactional writes take turns and validate stock on the server. MySQL can be reconsidered if write concurrency grows; migration requires schema/data verification.
+**Why MySQL?** Laragon's MySQL service on the store computer holds the database; multiple browser clients access it through Laravel. Short transactional writes validate stock on the server with conditional updates, and unique references prevent duplicate recording. The service must be running before the store starts; the SQLite file and its backup remain as instant rollback.
 
 **Where is the technopreneurship value?** Customers prepare inquiries in one place; staff confirm through an existing social channel, record sales, monitor stock, and identify restocking needs. This supports the business model's convenience and low initial operating complexity.
 
@@ -49,8 +49,8 @@ Before dispatch, open **Edit order** to correct the address/notes. On an unpaid 
 
 **Do staff need terminal commands every day?** No. Start Store.cmd runs php artisan serve in the background and opens the browser; Stop Store.cmd stops its processes after cashiers finish. Automatic Windows startup is deferred. This HTTP development server is the temporary defense setup; production deployment needs a separate plan.
 
-**Will it be hosted?** The existing catalog address is https://smart-school-supplies-store.cincocharlie25.workers.dev/ on Cloudflare Workers Static Assets. The user explicitly accepted this catalog-only host in the 2026-10-14 revised 1.3.0 plan (REQ-034), replacing the historical Pages approach in REQ-033. Public updates use the existing Git integration; current release publication and live checks must be confirmed in VERIFICATION.md. Static hosting needs no paid plan or custom domain for this address. Only catalog files are public; Laravel/POS/IMS, SQLite, accounts and real records remain local. The public catalog needs internet but does not require the store computer to run.
+**Will it be hosted?** The existing catalog address is https://smart-school-supplies-store.cincocharlie25.workers.dev/ on Cloudflare Workers Static Assets. The user explicitly accepted this catalog-only host in the 2026-10-14 revised 1.3.0 plan (REQ-034), replacing the historical Pages approach in REQ-033. Public updates use the existing Git integration; current release publication and live checks must be confirmed in VERIFICATION.md. Static hosting needs no paid plan or custom domain for this address. Only catalog files are public; Laravel/POS/IMS, MySQL records, accounts and real records remain local. The public catalog needs internet but does not require the store computer to run.
 
 **Does GCash verify automatically?** No. Authorized staff verify money received in the store account and record the amount/reference; this prototype has no payment gateway. References are unique and GCash payments have no change.
 
-**What is not demonstrated?** Automatic payment verification, automatic messaging, public order acceptance/tracking, paid-sale refunds/voids, printer hardware control, tax-compliant invoicing, profit accounting, and automatic catalog synchronization. Local staff order tracking is included.
+**What is not demonstrated?** Automatic payment verification, automatic messaging, public order acceptance/tracking, printer hardware control, tax-compliant invoicing, profit accounting, and automatic catalog synchronization. Local staff order tracking is included. Refunds, username sign-in, Settings, and item photos are newer local features covered in README and the local guide rather than this walkthrough.

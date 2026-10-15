@@ -23,6 +23,11 @@ class Sale extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function refund()
+    {
+        return $this->hasOne(Refund::class);
+    }
+
     public function receiptNumber(): string
     {
         return 'SS-'.str_pad((string) $this->id, 6, '0', STR_PAD_LEFT);

@@ -46,7 +46,7 @@ class Checkout
                 $total += $lineTotal;
                 $lines[] = ['product_id' => $product->id, 'name' => $product->name, 'sku' => $product->sku, 'kind' => $product->kind, 'quantity' => $quantity, 'price_cents' => $product->price_cents, 'total_cents' => $lineTotal];
             }
-            if ($total > 2000000000 || $cash < $total) {
+            if ($total > 999999999 || $cash < $total) {
                 throw ValidationException::withMessages(['cash' => $cash < $total ? 'Cash received must cover the full total.' : 'This sale exceeds the supported transaction amount.']);
             }
             $payment = Payment::fields($cash, $total, $method, $paymentReference, $verified);

@@ -1,5 +1,7 @@
 # Accepted cloud architecture — 2.0.1
 
+Current engine amendment (3.0.0, REQ-043, 2026-10-15): the local store database is Laragon MySQL (8.x) on the store computer; prior SQLite passages below remain historical evidence. Roles, transactions, reservations, receipt attribution, and catalog-publication boundaries are unchanged. The SQLite file and its private backup remain as instant rollback.
+
 REQ-037–042 supersede the historical local-only hosting boundary for the new application. This design uses simplified ISO/IEC/IEEE 29148 traceability. Existing local architecture below remains the fallback and historical record.
 
 Cloudflare serves public static files only: the guest catalog at `/` and the staff PWA at `/staff/`. Supabase Auth identifies staff; PostgreSQL read-only row policies and guarded transactional RPCs enforce Admin/Cashier roles. Cashier administration runs in a JWT-validated Edge function with its service-role credential confined to the server. Every authenticated database operation checks an active profile, the JWT session ID against `auth.sessions`, and a password-reset revocation marker. Guest access is limited to an active-product catalog projection, without staff, customer or payment records.

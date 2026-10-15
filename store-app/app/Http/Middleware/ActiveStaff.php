@@ -16,7 +16,7 @@ class ActiveStaff
             $request->session()->invalidate();
             $request->session()->regenerateToken();
 
-            return redirect()->route('login')->withErrors(['email' => 'Your staff access is unavailable. Ask the Admin for assistance.']);
+            return redirect()->route('login')->withErrors(['login' => 'Your staff access is unavailable. Ask the Admin for assistance.']);
         }
 
         return $next($request);

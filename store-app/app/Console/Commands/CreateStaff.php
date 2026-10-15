@@ -16,14 +16,14 @@ class CreateStaff extends Command
     public function handle(): int
     {
         $name = $this->ask('Staff name');
-        $email = $this->ask('Login email');
-        $email = is_string($email) ? Str::lower(trim($email)) : $email;
+        $username = $this->ask('Username (letters, numbers, hyphens, 3-40 characters)');
+        $username = is_string($username) ? Str::lower(trim($username)) : $username;
         $password = $this->secret('Password (at least 12 characters)');
         $role = $this->option('role');
         $role = $role === 'owner' ? 'admin' : $role;
-        $validator = Validator::make(compact('name', 'email', 'password', 'role'), ['name' => 'required|string|max:100', 'email' => ['required', 'email', 'max:255', function ($attribute, $value, $fail) {
-            if (User::whereRaw('LOWER(email) = ?', [Str::lower($value)])->exists()) {
-                $fail('The email has already been taken.');
+        $validator = Validator::make(compact('name', 'username', 'password', 'role'), ['name' => 'required|string|max:100', 'username' => ['required', 'string', 'regex:/^[A-Za-z0-9-]{3,40}$/', function ($attribute, $value, $fail) {
+            if (User::whereRaw('LOWER(username) = ?', [Str::lower($value)])->exists()) {
+                $fail('The username has already been taken.');
             }
         }], 'password' => 'required|string|min:12|max:255', 'role' => 'required|in:admin,cashier']);
         if ($validator->fails()) {
@@ -35,7 +35,7 @@ class CreateStaff extends Command
         }
         $user = new User;
         $user->name = $name;
-        $user->email = $email;
+        $user->username = $username;
         $user->password = $password;
         $user->role = $role;
         $user->active = true;

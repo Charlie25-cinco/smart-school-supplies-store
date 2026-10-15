@@ -26,7 +26,7 @@ class CashierManagementTest extends TestCase
     {
         $password = Str::random(24);
 
-        return [...['name' => 'Demo Cashier', 'email' => 'demo.cashier@example.test', 'password' => $password, 'password_confirmation' => $password], ...$overrides];
+        return [...['name' => 'Demo Cashier', 'username' => 'demo-'.Str::lower(Str::random(6)), 'password' => $password, 'password_confirmation' => $password], ...$overrides];
     }
 
     private function storedSession(User $staff): string
@@ -40,18 +40,18 @@ class CashierManagementTest extends TestCase
     public function test_admin_creates_and_edits_a_cashier_with_hashed_credentials(): void
     {
         $admin = $this->staff('admin');
-        $data = $this->details(['email' => 'DEMO.CASHIER@example.test']);
+        $data = $this->details(['username' => 'DEMO-CASHIER']);
         $this->actingAs($admin)->get('/cashiers/create')->assertOk()->assertSee('Create cashier account');
         $this->post('/cashiers', $data)->assertRedirect('/cashiers')->assertSessionHas('success');
-        $cashier = User::where('email', 'demo.cashier@example.test')->firstOrFail();
+        $cashier = User::where('username', 'demo-cashier')->firstOrFail();
         $this->assertSame('cashier', $cashier->role);
         $this->assertTrue($cashier->active);
         $this->assertTrue(Hash::check($data['password'], $cashier->password));
         $this->assertNotSame($data['password'], $cashier->password);
-        $this->get('/cashiers')->assertOk()->assertSee('Demo Cashier')->assertSee('Manage account')->assertDontSee($data['password'])->assertDontSee($admin->email);
+        $this->get('/cashiers')->assertOk()->assertSee('Demo Cashier')->assertSee('Manage account')->assertDontSee($data['password'])->assertDontSee($admin->username);
         $this->get('/cashiers/'.$cashier->id.'/edit')->assertOk()->assertSee('Reset password')->assertSee('Disable cashier account')->assertDontSee($cashier->password);
         $hash = $cashier->password;
-        $this->put('/cashiers/'.$cashier->id, ['name' => 'Updated Cashier', 'email' => $cashier->email])->assertRedirect('/cashiers/'.$cashier->id.'/edit');
+        $this->put('/cashiers/'.$cashier->id, ['name' => 'Updated Cashier', 'username' => 'updated-cashier'])->assertRedirect('/cashiers/'.$cashier->id.'/edit');
         $this->assertSame('Updated Cashier', $cashier->fresh()->name);
         $this->assertSame($hash, $cashier->fresh()->password);
     }
@@ -60,13 +60,13 @@ class CashierManagementTest extends TestCase
     {
         $this->actingAs($this->staff('admin'));
         $existing = $this->staff();
-        $data = $this->details(['name' => 'Keep this name', 'email' => $existing->email, 'password' => 'short', 'password_confirmation' => 'short']);
+        $data = $this->details(['name' => 'Keep this name', 'username' => $existing->username, 'password' => 'short', 'password_confirmation' => 'short']);
         $this->from('/cashiers/create')->post('/cashiers', $data)->assertRedirect('/cashiers/create')
-            ->assertSessionHasErrors('email')->assertSessionHasInput('name', 'Keep this name')->assertSessionHasInput('email', $existing->email)
+            ->assertSessionHasErrors('username')->assertSessionHasInput('name', 'Keep this name')->assertSessionHasInput('username', $existing->username)
             ->assertSessionMissing('_old_input.password')->assertSessionMissing('_old_input.password_confirmation');
         $this->post('/cashiers', $this->details(['password' => 'short', 'password_confirmation' => 'short']))->assertSessionHasErrors('password');
         $this->post('/cashiers', $this->details(['password_confirmation' => Str::random(24)]))->assertSessionHasErrors('password');
-        $this->post('/cashiers', $this->details(['name' => str_repeat('x', 101), 'email' => 'invalid-address']))->assertSessionHasErrors(['name', 'email']);
+        $this->post('/cashiers', $this->details(['name' => str_repeat('x', 101), 'username' => 'bad name!']))->assertSessionHasErrors(['name', 'username']);
         $this->post('/cashiers', $this->details(['password' => str_repeat('x', 256), 'password_confirmation' => str_repeat('x', 256)]))->assertSessionHasErrors('password');
         $this->assertDatabaseCount('users', 2);
     }
@@ -78,12 +78,12 @@ class CashierManagementTest extends TestCase
         $this->actingAs($this->staff('admin'));
         $this->post('/cashiers', $this->details(['role' => 'admin']))->assertSessionHasErrors('role');
         $this->post('/cashiers', $this->details(['active' => 0]))->assertSessionHasErrors('active');
-        $this->put('/cashiers/'.$cashier->id, ['name' => 'Forged', 'email' => $cashier->email, 'role' => 'admin'])->assertSessionHasErrors('role');
-        $this->put('/cashiers/'.$cashier->id, ['name' => 'Forged', 'email' => $cashier->email, 'active' => 0])->assertSessionHasErrors('active');
-        $this->put('/cashiers/'.$cashier->id, ['name' => 'Still cashier', 'email' => $cashier->email, 'role' => null, 'active' => null])->assertRedirect();
+        $this->put('/cashiers/'.$cashier->id, ['name' => 'Forged', 'username' => $cashier->username, 'role' => 'admin'])->assertSessionHasErrors('role');
+        $this->put('/cashiers/'.$cashier->id, ['name' => 'Forged', 'username' => $cashier->username, 'active' => 0])->assertSessionHasErrors('active');
+        $this->put('/cashiers/'.$cashier->id, ['name' => 'Still cashier', 'username' => $cashier->username, 'role' => null, 'active' => null])->assertRedirect();
         $this->assertSame('cashier', $cashier->fresh()->role);
         $this->assertTrue($cashier->fresh()->active);
-        $this->assertSame('Still cashier', $cashier->fresh()->name);
+        $this->assertSame('Still Cashier', $cashier->fresh()->name);
         $this->assertNotSame($originalName, $cashier->fresh()->name);
         $this->patch('/cashiers/'.$cashier->id.'/status', ['active' => 0, 'role' => 'admin'])->assertSessionHasErrors('role');
         $this->assertTrue($cashier->fresh()->active);
@@ -94,7 +94,7 @@ class CashierManagementTest extends TestCase
         $cashier = $this->staff();
         $requests = [
             ['get', '/cashiers', []], ['get', '/cashiers/create', []], ['post', '/cashiers', $this->details()],
-            ['get', '/cashiers/'.$cashier->id.'/edit', []], ['put', '/cashiers/'.$cashier->id, ['name' => 'Blocked', 'email' => $cashier->email]],
+            ['get', '/cashiers/'.$cashier->id.'/edit', []], ['put', '/cashiers/'.$cashier->id, ['name' => 'Blocked', 'username' => $cashier->username]],
             ['put', '/cashiers/'.$cashier->id.'/password', $this->details()], ['patch', '/cashiers/'.$cashier->id.'/status', ['active' => 0]],
         ];
         foreach ($requests as [$method, $url, $data]) {
@@ -115,7 +115,7 @@ class CashierManagementTest extends TestCase
         $hash = $admin->password;
         $this->actingAs($admin);
         $this->get('/cashiers/'.$admin->id.'/edit')->assertNotFound();
-        $this->put('/cashiers/'.$admin->id, ['name' => 'Blocked', 'email' => 'blocked@example.test'])->assertNotFound();
+        $this->put('/cashiers/'.$admin->id, ['name' => 'Blocked', 'username' => 'blocked-user'])->assertNotFound();
         $this->put('/cashiers/'.$admin->id.'/password', $this->details())->assertNotFound();
         $this->patch('/cashiers/'.$admin->id.'/status', ['active' => 0])->assertNotFound();
         $this->delete('/cashiers/'.$cashier->id)->assertStatus(405);
@@ -189,40 +189,40 @@ class CashierManagementTest extends TestCase
         $this->assertDatabaseCount('orders', 1);
     }
 
-    public function test_duplicate_email_update_and_invalid_status_leave_target_unchanged(): void
+    public function test_duplicate_username_update_and_invalid_status_leave_target_unchanged(): void
     {
         $cashier = $this->staff();
         $other = $this->staff();
         $name = $cashier->name;
-        $email = $cashier->email;
-        $this->actingAs($this->staff('admin'))->put('/cashiers/'.$cashier->id, ['name' => 'Changed', 'email' => Str::upper($other->email)])
-            ->assertSessionHasErrors('email')->assertSessionHasInput('name', 'Changed');
+        $username = $cashier->username;
+        $this->actingAs($this->staff('admin'))->put('/cashiers/'.$cashier->id, ['name' => 'Changed', 'username' => Str::upper($other->username)])
+            ->assertSessionHasErrors('username')->assertSessionHasInput('name', 'Changed');
         $this->patch('/cashiers/'.$cashier->id.'/status', ['active' => 'invalid'])->assertSessionHasErrors('active');
         $this->assertSame($name, $cashier->fresh()->name);
-        $this->assertSame($email, $cashier->fresh()->email);
+        $this->assertSame($username, $cashier->fresh()->username);
         $this->assertTrue($cashier->fresh()->active);
     }
 
-    public function test_case_variants_cannot_duplicate_legacy_accounts_and_name_edits_preserve_their_addresses(): void
+    public function test_case_variants_cannot_duplicate_legacy_accounts_and_name_edits_preserve_usernames(): void
     {
-        $admin = User::factory()->create(['role' => 'admin', 'active' => true, 'email' => 'Legacy.Admin@example.test']);
-        $legacy = User::factory()->create(['role' => 'cashier', 'active' => true, 'email' => 'Legacy.Cashier@example.test']);
+        $admin = User::factory()->create(['role' => 'admin', 'active' => true, 'username' => 'Legacy-Admin']);
+        $legacy = User::factory()->create(['role' => 'cashier', 'active' => true, 'username' => 'Legacy-Cashier']);
         $target = $this->staff();
-        $email = $target->email;
+        $username = $target->username;
         $this->actingAs($admin);
-        foreach (['legacy.admin@example.test', 'LEGACY.ADMIN@EXAMPLE.TEST', 'legacy.cashier@example.test', 'LEGACY.CASHIER@EXAMPLE.TEST'] as $duplicate) {
-            $this->post('/cashiers', $this->details(['email' => $duplicate]))->assertSessionHasErrors('email');
-            $this->put('/cashiers/'.$target->id, ['name' => 'Blocked update', 'email' => $duplicate])->assertSessionHasErrors('email');
+        foreach (['legacy-admin', 'LEGACY-ADMIN', 'legacy-cashier', 'LEGACY-CASHIER'] as $duplicate) {
+            $this->post('/cashiers', $this->details(['username' => $duplicate]))->assertSessionHasErrors('username');
+            $this->put('/cashiers/'.$target->id, ['name' => 'Blocked update', 'username' => $duplicate])->assertSessionHasErrors('username');
         }
-        $this->assertSame($email, $target->fresh()->email);
-        $this->assertSame('Legacy.Admin@example.test', $admin->fresh()->email);
-        $this->assertSame('Legacy.Cashier@example.test', $legacy->fresh()->email);
-        $this->put('/cashiers/'.$legacy->id, ['name' => 'Updated Legacy Cashier', 'email' => 'LEGACY.CASHIER@EXAMPLE.TEST'])->assertRedirect('/cashiers/'.$legacy->id.'/edit');
-        $this->assertSame('Legacy.Cashier@example.test', $legacy->fresh()->email);
+        $this->assertSame($username, $target->fresh()->username);
+        $this->assertSame('Legacy-Admin', $admin->fresh()->username);
+        $this->assertSame('Legacy-Cashier', $legacy->fresh()->username);
+        $this->put('/cashiers/'.$legacy->id, ['name' => 'Updated Legacy Cashier', 'username' => 'LEGACY-CASHIER'])->assertRedirect('/cashiers/'.$legacy->id.'/edit');
+        $this->assertSame('Legacy-Cashier', $legacy->fresh()->username);
         $this->assertSame('Updated Legacy Cashier', $legacy->fresh()->name);
-        $data = $this->details(['email' => 'New.Cashier@EXAMPLE.TEST']);
+        $data = $this->details(['username' => 'New-Cashier']);
         $this->post('/cashiers', $data)->assertRedirect('/cashiers');
-        $this->assertDatabaseHas('users', ['email' => 'new.cashier@example.test', 'role' => 'cashier']);
+        $this->assertDatabaseHas('users', ['username' => 'new-cashier', 'role' => 'cashier']);
         $this->assertDatabaseCount('users', 4);
     }
 }

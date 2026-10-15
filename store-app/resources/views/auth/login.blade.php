@@ -9,7 +9,7 @@
         @if($errors->any())<div class="notice error" role="alert">{{ $errors->first() }}</div>@endif
         @if(config('store.demo'))<p class="badge demo">Defense prototype · sample products and prices</p>@endif
         <form action="{{ url('/login') }}" method="post" class="form-stack">@csrf
-            <label for="email">Email address</label><input id="email" type="email" name="email" value="{{ old('email') }}" required autocomplete="username" autofocus>
+            <label for="login">Username</label><input id="login" name="login" maxlength="40" value="{{ old('login') }}" required autocomplete="username" autofocus>
             <label for="password">Password</label><input id="password" type="password" name="password" required autocomplete="current-password">
             <button type="submit" class="button primary full">Sign in <span aria-hidden="true">→</span></button>
         </form>

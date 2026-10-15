@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.1.0 — 2026-10-15 (staff UX package and refunds; unpublished)
+
+- Added password show/hide toggles on all staff password fields.
+- Added a live password-requirements indicator on new-password fields (12-character rule, complexity suggestions, confirmation match).
+- Added safe inventory deletion for never-transacted items with a confirmation dialog (system opening-stock entries are removed with the item); transacted or manually-moved items stay protected with deactivation guidance.
+- Added display-only name capitalization on product/staff-facing cards; stored values, SKUs, usernames, and references are never transformed.
+- Added while-typing title-casing on text inputs (caret-preserving, full exclusion list) with authoritative server-side normalization; product detail stays as typed.
+- Added a desktop sidebar collapse/expand toggle with a slim edge-docked reopen handle and persisted preference; the open layout is unchanged.
+- Added a Settings section: self-service name/password change (other-device sign-out included) and Admin-only default reorder level plus receipt note.
+- Standardized error summaries and confirmation dialogs on destructive flows (item delete, password reset, access change, order cancel, catalog clear).
+- Refreshed password help text to suggest mixed characters; the 12-character minimum and all server rules are unchanged.
+- Added username sign-in (handle rules, case-insensitive uniqueness, backfilled accounts, CLI support); staff email was then removed completely (column dropped, username-only login/forms/CLI, email-style logins rejected, future cloud Auth linkage to be re-planned).
+- Added full-order paid refunds: linked once-only reversal records with mandatory reasons, goods-returned and manual-GCash confirmations, product restocking, frozen originals, and gross/refund/net reporting across the sales report and the Admin overview (net revenue, chart, cash/GCash, units, refunded tile and badges).
+- Verified 103 PHP tests, full browser and local-server suites against isolated MySQL databases. Publication and live verification remain pending.
+
+## 3.0.0 — 2026-10-15 (Laragon MySQL engine; unpublished)
+
+- Changed the store database from SQLite to Laragon MySQL (8.x) with no business-rule change: same roles, transactions, reservations, receipt numbering, and catalog-publication boundaries.
+- Added MySQL connections to the catalog exporter/shared mapping/preview router, isolated MySQL fixture databases for all suites, and engine-agnostic test fixes (receipt-number assertion, integer-cast inspectors).
+- Changed setup/backup/reset/test documentation to MySQL with Laragon service, dump, and rollback guidance; the SQLite file and its private backup remain as instant rollback.
+- Verified 84 PHP tests, full browser and local-server suites against isolated MySQL databases. Publication and live verification remain pending. This is a major version because the database engine changes; it remains a defense prototype.
+
+## 2.2.1 — 2026-10-14 (live SQLite catalog preview; unpublished)
+
+## 2.2.1 — 2026-10-14 (live SQLite catalog preview; unpublished)
+
+- Added a local-only preview router so the catalog reads the store database live on every page load; plain reload shows new products with no preview restart. The published site still ships only the reviewed file.
+- Fixed catalog photo resolution to the real disk location (`storage/app/private/` first, legacy path as fallback); uploads always worked, only the exporter looked in the wrong folder.
+- Extracted the shared SQLite-to-catalog mapping used identically by the exporter and the preview router.
+
+## 2.2.0 — 2026-10-14 (product photos and card stock info; unpublished)
+
+- Added Admin product-photo upload (JPEG/PNG/WebP up to 2MB, file storage with database path, staff-only serving, replace/remove) with thumbnails on inventory, POS, and the item form.
+- Added catalog card stock lines (In stock / Running low with counts, Unavailable with locked Add) and photo rendering with SVG fallback.
+- Added an item short-description field that flows through the exporter to catalog cards, a category dropdown with new-category entry, and clearer reorder-level guidance.
+- Extended the catalog exporter to carry photos into published assets; added uploader, serving, exporter, and badge coverage. Full PHP (79 tests) and browser suites pass locally. Publication and live verification remain pending.
+
+## 2.1.0 — 2026-10-14 (catalog preview launchers)
+
+- Added Start Catalog.cmd and Stop Catalog.cmd with owned-process tracking, readiness wait, and port safeguards for one-click local catalog previews.
+- Start Catalog.cmd refreshes the preview file from SQLite before serving (warns and serves the previous file if the refresh fails).
+- Added scripts/export-catalog-products.php, a read-only SQLite-to-catalog exporter (snapshot copy, dry-run diff, inactive/consumable exclusion, invalid-row refusal).
+
+## 2.0.4 — 2026-10-14 (floating catalog controls; unpublished)
+
+- Changed the Your-list control to a fixed right-bottom corner pill on all screens with a modest size increase, then to an icon-only 56px circle with a count badge and a count-synced accessible name.
+- Added a fixed bottom-left Browse quick navigator with section links only (a panel search handoff was tried and removed at the user's request), then converted it to an icon-only circle with an accessible name and tooltip.
+- Added quick-navigation and accessible-name browser coverage and scoped a toolbar-search locator; full legacy UI suite passes locally. Publication and live verification remain pending.
+
+## 2.0.3 — 2026-10-14 (defense readiness; not deployed)
+
+- Added a day-after runbook covering real-record entry and catalog refresh after the sample-data defense demo.
+
+## 2.0.2 — 2026-10-14 (cutover readiness; not deployed)
+
+- Fixed counter-checkout maximum to 999,999,999 centavos, matching the order, payment and cloud offline limits.
+
 ## 2.0.1 — 2026-10-14 (review corrections; not deployed)
 
 - Fixed interrupted logout recovery with a private-workspace suspension and an online Finish sign out action before device reuse.

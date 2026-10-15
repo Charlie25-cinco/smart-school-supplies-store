@@ -113,16 +113,16 @@ class OrderWorkflowTest extends TestCase
         $this->actingAs($cashier)->post('/orders', $this->orderData($item));
         $order = Order::firstOrFail();
         $old = $this->editData($order);
-        $this->put('/orders/'.$order->id, [...$old, 'customer_name' => 'Latest details'])->assertRedirect();
+        $this->put('/orders/'.$order->id, [...$old, 'customer_name' => 'Latest Details'])->assertRedirect();
         $this->put('/orders/'.$order->id, [...$old, 'customer_name' => 'Stale details'])->assertSessionHasErrors('edit_token');
-        $this->assertSame('Latest details', $order->fresh()->customer_name);
+        $this->assertSame('Latest Details', $order->fresh()->customer_name);
         $this->assertSame(2, $item->fresh()->reserved);
         $this->actingAs(User::factory()->create(['role' => 'cashier']));
         $this->get('/orders/'.$order->id.'/edit')->assertForbidden();
         $this->put('/orders/'.$order->id, $this->editData($order))->assertForbidden();
         $this->actingAs(User::factory()->create(['role' => 'admin']))->get('/orders/'.$order->id.'/edit')->assertForbidden();
         $this->put('/orders/'.$order->id, $this->editData($order))->assertForbidden();
-        $this->get('/orders/'.$order->id)->assertOk()->assertSee('Latest details');
+        $this->get('/orders/'.$order->id)->assertOk()->assertSee('Latest Details');
     }
 
     public function test_paid_order_allows_customer_correction_but_freezes_items_fee_and_receipt(): void
@@ -132,8 +132,8 @@ class OrderWorkflowTest extends TestCase
         $order = Order::firstOrFail();
         $sale = Sale::firstOrFail();
         $saleBefore = $sale->getAttributes();
-        $this->put('/orders/'.$order->id, $this->editData($order, ['customer_name' => 'Corrected customer', 'delivery_address' => 'Corrected school gate', 'notes' => 'Demo correction']))->assertRedirect();
-        $this->assertSame('Corrected customer', $order->fresh()->customer_name);
+        $this->put('/orders/'.$order->id, $this->editData($order, ['customer_name' => 'Corrected Customer', 'delivery_address' => 'Corrected school gate', 'notes' => 'Demo correction']))->assertRedirect();
+        $this->assertSame('Corrected Customer', $order->fresh()->customer_name);
         $this->assertSame($saleBefore, $sale->fresh()->getAttributes());
         $this->put('/orders/'.$order->id, $this->editData($order, ['delivery_fee' => '0', 'items' => [['product_id' => $item->id, 'quantity' => 1]]]))->assertSessionHasErrors(['delivery_fee', 'items']);
         $this->assertSame(11050, $order->fresh()->total_cents);
