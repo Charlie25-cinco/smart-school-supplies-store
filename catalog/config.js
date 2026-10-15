@@ -2,6 +2,6 @@
 window.STORE_CONFIG = {
     name: 'Smart School Supplies',
     messengerUrl: 'https://www.facebook.com/profile.php?id=61594157431738', // Public store Page; no credentials.
-    demo: true,
+    demo: false,
     location: 'Pickup and nearby delivery arrangements are confirmed with staff.'
 };

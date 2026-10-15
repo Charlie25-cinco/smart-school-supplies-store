@@ -1,19 +1,15 @@
 [
-  {"sku":"NB-001","name":"Spiral Notebook","category":"Notebooks & Paper","kind":"product","price_cents":4500,"stock":48,"reorder_level":10,"description":"80 sheets for notes, ideas, and everyday classes.","art":"notebook","color":"sage"},
-  {"sku":"NB-002","name":"Composition Notebook","category":"Notebooks & Paper","kind":"product","price_cents":3000,"stock":60,"reorder_level":10,"description":"A dependable ruled notebook for every subject.","art":"notebook","color":"peach"},
-  {"sku":"PN-001","name":"Black Ballpen","category":"Writing Essentials","kind":"product","price_cents":1200,"stock":120,"reorder_level":20,"description":"Smooth black ink for your daily writing.","art":"pen","color":"blue"},
-  {"sku":"PN-002","name":"Blue Ballpen","category":"Writing Essentials","kind":"product","price_cents":1200,"stock":85,"reorder_level":20,"description":"Your everyday pen, in classic blue ink.","art":"pen","color":"sage"},
-  {"sku":"PC-001","name":"No. 2 Pencil","category":"Writing Essentials","kind":"product","price_cents":1000,"stock":75,"reorder_level":15,"description":"For first drafts, sketches, and exam days.","art":"pencil","color":"yellow"},
-  {"sku":"BP-001","name":"A4 Bond Paper · 100 sheets","category":"Notebooks & Paper","kind":"product","price_cents":8500,"stock":24,"reorder_level":8,"description":"Clean white paper for reports and projects.","art":"paper","color":"blue"},
-  {"sku":"FD-001","name":"Long Folder","category":"School Essentials","kind":"product","price_cents":1500,"stock":8,"reorder_level":10,"description":"Keep your school documents neatly together.","art":"folder","color":"yellow"},
-  {"sku":"EV-001","name":"Brown Envelope","category":"School Essentials","kind":"product","price_cents":1000,"stock":35,"reorder_level":10,"description":"A simple home for handouts and submissions.","art":"folder","color":"peach"},
-  {"sku":"AR-001","name":"Colored Pencils · 12 colors","category":"Art Materials","kind":"product","price_cents":6500,"stock":18,"reorder_level":5,"description":"A little color for your next big idea.","art":"pencils","color":"peach"},
-  {"sku":"IC-001","name":"Index Cards · 20 pack","category":"School Essentials","kind":"product","price_cents":2500,"stock":6,"reorder_level":8,"description":"Make revision, flashcards, and reminders easier.","art":"paper","color":"sage"},
-  {"sku":"ST-001","name":"Mini Stapler","category":"School Essentials","kind":"product","price_cents":5500,"stock":15,"reorder_level":5,"description":"Small enough for your bag, ready for your reports.","art":"stapler","color":"blue"},
-  {"sku":"BG-001","name":"Everyday School Bag","category":"School Essentials","kind":"product","price_cents":35000,"stock":12,"reorder_level":3,"description":"Carry your school-day essentials comfortably.","art":"bag","color":"sage"},
-  {"sku":"SV-001","name":"Black & White Printing · page","category":"Academic Services","kind":"service","price_cents":300,"stock":0,"reorder_level":0,"description":"Document printing. Confirm paper size and page count with staff.","art":"paper","color":"sage"},
-  {"sku":"SV-002","name":"Photocopying · page","category":"Academic Services","kind":"service","price_cents":200,"stock":0,"reorder_level":0,"description":"Copies for handouts, notes, and study materials.","art":"paper","color":"blue"},
-  {"sku":"SV-003","name":"Document Scanning · page","category":"Academic Services","kind":"service","price_cents":500,"stock":0,"reorder_level":0,"description":"Request a digital copy of a printed document.","art":"paper","color":"yellow"},
-  {"sku":"SV-004","name":"Document Binding · document","category":"Academic Services","kind":"service","price_cents":4500,"stock":0,"reorder_level":0,"description":"Confirm the document thickness and binding options with staff.","art":"notebook","color":"peach"},
-  {"sku":"SV-005","name":"ID Picture Printing · set","category":"Academic Services","kind":"service","price_cents":4000,"stock":0,"reorder_level":0,"description":"Ask staff about picture sizes and available formats.","art":"paper","color":"blue"}
+    {
+        "sku": "blck-pn",
+        "name": "Black Pen",
+        "category": "Writing Essentials",
+        "kind": "product",
+        "price_cents": 1000,
+        "stock": 50,
+        "reorder_level": 10,
+        "description": "Smooth like butter.",
+        "image": "assets/products/blck-pn.jpg",
+        "art": "notebook",
+        "color": "blue"
+    }
 ]

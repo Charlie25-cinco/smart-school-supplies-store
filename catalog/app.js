@@ -61,12 +61,19 @@
         items.forEach(product => {
             const card = element('article', 'product-card');
             const visual = element('div', `product-art ${['sage','peach','blue','yellow'].includes(product.color) ? product.color : 'sage'}`); visual.setAttribute('aria-hidden', 'true');
-            // SVG artwork is an internal constant, never catalog-supplied HTML.
-            visual.innerHTML = `<svg viewBox="0 0 175 175" fill="none">${art[product.art] || art.notebook}</svg>`;
+            if (typeof product.image === 'string' && /^assets\/products\/[A-Za-z0-9-]+\.(jpg|jpeg|png|webp)$/.test(product.image)) {
+                // Staff-uploaded photo, served as a local static file; SVG illustration remains the fallback.
+                const photo = document.createElement('img'); photo.src = product.image; photo.alt = ''; photo.loading = 'lazy'; photo.width = 175; photo.height = 175; visual.replaceChildren(photo);
+            } else visual.innerHTML = `<svg viewBox="0 0 175 175" fill="none">${art[product.art] || art.notebook}</svg>`;
             const content = element('div', 'product-content'); content.append(element('p', 'product-category', product.category), element('h3', '', product.name), element('p', 'product-description', product.description));
             const bottom = element('div', 'product-bottom'); const button = element('button', 'add-item', 'Add'); button.type = 'button'; button.setAttribute('aria-label', `Add ${product.name} to your list`); button.addEventListener('click', () => add(product.sku));
             if (cloudConfigured) content.append(element('p', 'catalog-availability' + (product.available === false ? ' unavailable' : ''), product.available === false ? 'Currently unavailable' : 'Available in last synced stock'));
-            button.disabled = product.available === false;
+            else if (Number.isInteger(product.stock)) {
+                const out = product.stock <= 0, low = Number.isInteger(product.reorder_level) ? product.reorder_level : 0;
+                content.append(element('p', 'catalog-availability' + (out ? ' unavailable' : ''), out ? 'Unavailable' : (product.stock <= low ? `Running low · ${product.stock} left` : `In stock · ${product.stock} available`)));
+                if (out) button.disabled = true;
+            }
+            button.disabled = product.available === false || button.disabled;
             bottom.append(element('strong', '', money(product.price_cents)), button); content.append(bottom); card.append(visual, content); grid.append(card);
         });
         grid.setAttribute('aria-busy', 'false'); document.getElementById('catalog-count').textContent = `${items.length} ${items.length === 1 ? 'essential' : 'essentials'}`; document.getElementById('catalog-empty').hidden = items.length > 0;
@@ -113,6 +120,7 @@
         });
         document.getElementById('basket-count').textContent = count;
         document.getElementById('floating-basket-count').textContent = count;
+        document.getElementById('floating-basket').setAttribute('aria-label', `Your list, ${count} ${count === 1 ? 'item' : 'items'}`);
         document.getElementById('clear-basket').disabled = count === 0;
         document.getElementById('basket-empty').hidden = count > 0; document.getElementById('basket-details').hidden = count === 0; summary();
         if (focused) { const control = [...lines.querySelectorAll('[data-basket-control]')].find(el => el.dataset.basketControl === focused); (control || document.getElementById('close-basket')).focus(); }
@@ -120,7 +128,7 @@
     let restored = [];
     try { restored = JSON.parse(localStorage.getItem('smart-supplies-list-v1') || '[]'); } catch { /* Ignore invalid or unavailable local storage. */ }
     let loading = false;
-    const validProducts = data => Array.isArray(data) && data.every(p => typeof p.sku === 'string' && typeof p.name === 'string' && ['product','service'].includes(p.kind) && Number.isSafeInteger(p.price_cents) && p.price_cents > 0 && (!cloudConfigured || typeof p.available === 'boolean'));
+    const validProducts = data => Array.isArray(data) && data.every(p => typeof p.sku === 'string' && typeof p.name === 'string' && ['product','service'].includes(p.kind) && Number.isSafeInteger(p.price_cents) && p.price_cents > 0 && (!cloudConfigured || typeof p.available === 'boolean') && (!('image' in p) || p.image === null || (typeof p.image === 'string' && /^assets\/products\/[A-Za-z0-9-]+\.(jpg|jpeg|png|webp)$/.test(p.image))));
     const load = async () => {
         if (loading) return;
         loading = true;
@@ -129,7 +137,7 @@
             if (cloudConfigured && !cloudEndpoint) throw new Error('Invalid catalog configuration');
             let data, fetchedAt, cached = false;
             try {
-                const response = cloudConfigured ? await fetch(cloudEndpoint + '/rest/v1/rpc/public_catalog', {method:'POST', headers:{apikey:cloud.key,'Content-Type':'application/json'}, body:'{}', credentials:'omit', cache:'no-store', signal:AbortSignal.timeout(10000)}) : await fetch('products.json');
+                const response = cloudConfigured ? await fetch(cloudEndpoint + '/rest/v1/rpc/public_catalog', {method:'POST', headers:{apikey:cloud.key,'Content-Type':'application/json'}, body:'{}', credentials:'omit', cache:'no-store', signal:AbortSignal.timeout(10000)}) : await fetch('products.json', {cache:'no-store'});
                 if (!response.ok) throw new Error('Catalog unavailable');
                 data = await response.json(); if (!validProducts(data)) throw new Error('Invalid catalog');
                 fetchedAt = new Date().toISOString();
@@ -163,7 +171,22 @@
     }));
     document.getElementById('close-basket').addEventListener('click', () => dialog.close());
     dialog.addEventListener('close', () => { floatingBasket.hidden = false; basketOpener?.focus({preventScroll: true}); });
-    document.getElementById('clear-basket').addEventListener('click', () => {
+    const quickNav = document.getElementById('floating-nav'), quickPanel = document.getElementById('quick-nav-panel');
+    const setQuickNav = open => { quickPanel.hidden = !open; quickNav.setAttribute('aria-expanded', String(open)); if (open) quickPanel.querySelector('a')?.focus({preventScroll: true}); };
+    quickNav.addEventListener('click', () => setQuickNav(quickPanel.hidden));
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && !quickPanel.hidden && !dialog.open) { setQuickNav(false); quickNav.focus({preventScroll: true}); } });
+    quickPanel.querySelectorAll('a').forEach(link => link.addEventListener('click', () => setQuickNav(false)));
+    const clearButton = document.getElementById('clear-basket');
+    let clearArmed = false, clearTimer;
+    const disarmClear = () => { clearArmed = false; clearTimeout(clearTimer); if (clearButton.textContent !== 'Clear all') clearButton.textContent = 'Clear all'; };
+    clearButton.addEventListener('click', () => {
+        if (!clearArmed) {
+            clearArmed = true; clearButton.textContent = 'Confirm clear';
+            basketStatus.textContent = 'Select Clear all again to empty your list.';
+            clearTimer = setTimeout(() => { disarmClear(); basketStatus.textContent = ''; }, 5000);
+            return;
+        }
+        disarmClear();
         cart.clear();
         try { localStorage.removeItem('smart-supplies-list-v1'); } catch { /* Clearing still works without storage. */ }
         renderBasket(); basketStatus.textContent = 'Your list has been cleared.';
